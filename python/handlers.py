@@ -88,9 +88,7 @@ def notification(file_date, file_name, file_size):
         # Provide the contents of the email.
         response = ses.send_email(
             Destination={
-                'ToAddresses': [
-                    recipients,
-                ],
+                'ToAddresses': recipients
             },
             Message={
                 'Body': {
