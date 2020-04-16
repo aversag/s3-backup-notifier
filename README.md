@@ -56,7 +56,8 @@ $ make deploy \
     RECIPIENTS='<recipient_email1> <recipient_email2>' \
     AWS_REGION='<your_aws_region>' \
     AWS_SES_REGION='<your_aws_ses_region>' \
-    BOTOLAYER='<your-arn-for-boto-layer>'
+    BOTOLAYER='<your-boto-layer-name-in-arn>' \
+    BOTOLAYERVERSION='<your-boto-layer-version-in-arn>'
 ```
 
 ### Cleaning

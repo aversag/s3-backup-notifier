@@ -16,10 +16,14 @@ Parameters:
     Type: String
     Default: eu-west-1
     Description: AWS Region
-  MONITORINGBUCKET:
+  AWSREGION:
     Type: String
-    Default: no_bucket_vars_definied
-    Description: Monitored bucket name
+    Default: eu-west-1
+    Description: AWS Region
+  AWSSESREGION:
+    Type: String
+    Default: eu-west-1
+    Description: AWS SES Region
   S3PREFIX:
     Type: String
     Default: no_prefix_defined
@@ -32,6 +36,14 @@ Parameters:
     Type: String
     Default: no_sender_defined@domain.com
     Description: Sender email addresses
+  BOTOLAYER:
+    Type: String
+    Default: boto3
+    Description: Layer name for boto3
+  BOTOLAYERVERSION:
+    Type: Number
+    Default: 1
+    Description: Layer version
 ###########################################################
 Resources:
 ###########################################################
@@ -46,7 +58,7 @@ Resources:
       MemorySize: 128
       Timeout: 30
       Layers:
-        - !Sub BOTOLAYER
+        - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:layer:${BOTOLAYER}:${BOTOLAYERVERSION}'
       Environment:
         Variables:
           MONITORINGBUCKET: !Ref MONITORINGBUCKET
@@ -54,6 +66,7 @@ Resources:
           RECIPIENTS: !Ref RECIPIENTS
           SENDER: !Ref SENDER
           AWSREGION: !Ref AWSREGION
+          AWSSESREGION: !Ref AWSSESREGION
       Policies:
         - AWSLambdaExecute # Managed Policy
         - Version: '2012-10-17' # Policy Document

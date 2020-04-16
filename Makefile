@@ -31,7 +31,7 @@ package: clean
 	mkdir -p build
 	mkdir -p sam-template
 
-	cp -R *.py ./build/
+	cp -R ./python/*.py ./build/
 
 	@echo "zipping python code, uploading to S3 bucket, and transforming template"
 	aws cloudformation package \
@@ -56,7 +56,9 @@ deploy:
 				RECIPIENTS=${RECIPIENTS} \
 				SENDER=${SENDER} \
 				AWSREGION=${AWS_REGION} \
-				BOTOLAYER=${BOTOLAYER}
+				AWSSESREGION=${AWS_SES_REGION} \
+				BOTOLAYER=${BOTOLAYER} \
+				BOTOLAYERVERSION=${BOTOLAYERVERSION} \
 			--no-fail-on-empty-changeset
 
 layer: clean-layer
