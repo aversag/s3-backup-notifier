@@ -16,14 +16,14 @@ Parameters:
     Type: String
     Default: eu-west-1
     Description: AWS Region
-  AWSREGION:
-    Type: String
-    Default: eu-west-1
-    Description: AWS Region
   AWSSESREGION:
     Type: String
     Default: eu-west-1
     Description: AWS SES Region
+  MONITORINGBUCKET:
+    Type: String
+    Default: no_bucket_defined
+    Description: AWS S3 Bucket
   S3PREFIX:
     Type: String
     Default: no_prefix_defined
