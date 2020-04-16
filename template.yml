@@ -16,10 +16,14 @@ Parameters:
     Type: String
     Default: eu-west-1
     Description: AWS Region
-  MONITORINGBUCKET:
+  AWSREGION:
     Type: String
-    Default: no_bucket_vars_definied
-    Description: Monitored bucket name
+    Default: eu-west-1
+    Description: AWS Region
+  AWSSESREGION:
+    Type: String
+    Default: eu-west-1
+    Description: AWS SES Region
   S3PREFIX:
     Type: String
     Default: no_prefix_defined
@@ -62,6 +66,7 @@ Resources:
           RECIPIENTS: !Ref RECIPIENTS
           SENDER: !Ref SENDER
           AWSREGION: !Ref AWSREGION
+          AWSSESREGION: !Ref AWSSESREGION
       Policies:
         - AWSLambdaExecute # Managed Policy
         - Version: '2012-10-17' # Policy Document
