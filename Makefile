@@ -18,7 +18,7 @@ DESCRIPTION := S3 Backup Notifier
 
 ################## Variables ##################
 S3_BUCKET ?= ${PROJECT}-artifacts
-MONITORING_BUCKET := backup.bucket
+MONITORING_BUCKETS := backup.bucket
 RECIPIENTS := david@doe.com
 SENDER := john@doe.com
 S3_PREFIX := MyPrefix
@@ -50,7 +50,7 @@ deploy:
 			--capabilities CAPABILITY_IAM \
 			--parameter-overrides \
 				ENV=${ENV} \
-				MONITORINGBUCKET=${MONITORING_BUCKET} \
+				MONITORINGBUCKETS=${MONITORING_BUCKETS} \
 				S3PREFIX=${S3_PREFIX} \
 				PROJECT=${PROJECT} \
 				RECIPIENTS=${RECIPIENTS} \

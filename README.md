@@ -50,7 +50,7 @@ Deploy CloudFormation stack.
 $ make deploy \
     PROJECT=<your_project_name> \
     ENV=<your_env> \
-    MONITORING_BUCKET=<bucket_to_monitor> \
+    MONITORING_BUCKETS=<buckets_to_monitor> \
     S3_PREFIX=<s3_prefix> \
     SENDER=<sender_email> \
     RECIPIENTS='<recipient_email1> <recipient_email2>' \

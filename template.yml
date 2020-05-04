@@ -20,7 +20,7 @@ Parameters:
     Type: String
     Default: eu-west-1
     Description: AWS SES Region
-  MONITORINGBUCKET:
+  MONITORINGBUCKETS:
     Type: String
     Default: no_bucket_defined
     Description: AWS S3 Bucket
@@ -61,7 +61,7 @@ Resources:
         - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:layer:${BOTOLAYER}:${BOTOLAYERVERSION}'
       Environment:
         Variables:
-          MONITORINGBUCKET: !Ref MONITORINGBUCKET
+          MONITORINGBUCKETS: !Ref MONITORINGBUCKETS
           S3PREFIX: !Ref S3PREFIX
           RECIPIENTS: !Ref RECIPIENTS
           SENDER: !Ref SENDER
@@ -74,7 +74,7 @@ Resources:
             - Effect: Allow
               Action:
               - s3:List*
-              Resource: !Sub 'arn:aws:s3:::${MONITORINGBUCKET}'
+              Resource: !Sub 'arn:aws:s3:::${MONITORINGBUCKETS}'
             - Effect: Allow
               Action:
                 - ses:SendEmail
@@ -88,5 +88,5 @@ Resources:
       Tags:
         Project: !Ref PROJECT
         Environment: !Ref ENV
-        Monitoring_Bucket_Name: !Ref MONITORINGBUCKET
+        MONITORING_BUCKETS_Name: !Ref MONITORINGBUCKETS
         Region: !Ref AWSREGION
