@@ -35,42 +35,55 @@ def sizeof_fmt(num, suffix='B'):
 
 
 def main(event, context):
-    try:
-        for bucket_name in bucket_names:
-            if not bucket_name.name.startswith(s3_prefix):
-                continue
-            
-            if bucket_name.name in bucket_blacklist:
-                continue
+    for bucket_name in bucket_names:
+        if not bucket_name.name.startswith(s3_prefix):
+            continue
+        
+        if bucket_name.name in bucket_blacklist:
+            continue
 
+        try:
+            print("Bucket --> " + str(bucket_name.name))
             bucket = s3.Bucket(bucket_name.name)
-            objs = bucket.objects.filter(Prefix=s3_prefix).all()
+            objs = bucket.objects.all()
+            
+            if not objs:
+                continue
 
             backup_success = 0
+            file_date = 0
+            file_name = ''
+            file_size = 0
+            
             for obj in objs:
+                
                 print(obj.last_modified.date(), obj.key, sizeof_fmt(obj.size))
                 file_date = obj.last_modified.date()
                 file_name = obj.key
                 file_size = sizeof_fmt(obj.size)
-                if file_date == today:
+                
+                if obj.last_modified.date() == today:
                     print("Backup OK, All Good")
                     print("--> " + str(file_date), file_name, file_size)
                     backup_success = 1
+                    
             if backup_success == 0:
-                notification(bucket_name=bucket_name.name, file_date=file_date, file_name=file_name, file_size=file_size)
+                notification(bucket_name.name, file_date=file_date, file_name=str(file_name), file_size=str(file_size))
                 print("No backup detected from today: " + str(today))
                 print("--> Last backup file: " + str(file_date), file_name, file_size)
-    except botocore.exceptions.ClientError as e:
-        error_code = e.response['Error']['Code']
-        print(e.response['Error']['Message'])
-        if error_code == '404':
-            print("There is no file in this bucket")
-        else:
-            print(e)
+                
+        except botocore.exceptions.ClientError as e:
+            error_code = e.response['Error']['Code']
+            print(e.response['Error']['Message'])
+            if error_code == '404':
+                print("There is no file in this bucket")
+            else:
+                print(e)
 
 
 def notification(bucket_name, file_date, file_name, file_size):
     try:
+        subject = 'S3 Backup failed ❌' + bucket_name
         CHARSET = "UTF-8"
         # Email body for recipients with non-HTML email clients.
         BODY_TEXT = ("S3 Backup Notifier\r\n"
@@ -111,7 +124,7 @@ def notification(bucket_name, file_date, file_name, file_size):
                 },
                 'Subject': {
                     'Charset': CHARSET,
-                    'Data': 'S3 Backup Notifier - Backup Failed ❌' + str(bucket_name),
+                    'Data': subject
                 },
             },
             Source=sender,
