@@ -51,7 +51,7 @@ deploy:
 			--capabilities CAPABILITY_IAM \
 			--parameter-overrides \
 				ENV=${ENV} \
-				BUCKETS_BLACKLIST=${BUCKETS_BLACKLIST} \
+				BUCKETSBLACKLIST=${BUCKETS_BLACKLIST} \
 				S3PREFIX=${S3_PREFIX} \
 				PROJECT=${PROJECT} \
 				RECIPIENTS=${RECIPIENTS} \
