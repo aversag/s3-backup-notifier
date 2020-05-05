@@ -12,7 +12,7 @@ help:
 	@echo "	cleaning - clean build and layer folders"
 
 ################## Project ####################
-PROJECT ?= zoph-s3monitor
+PROJECT ?= s3monitoring
 DESCRIPTION := S3 Backup Notifier
 ###############################################
 
@@ -22,7 +22,8 @@ MONITORING_BUCKETS := backup.bucket
 RECIPIENTS := david@doe.com
 SENDER := john@doe.com
 S3_PREFIX := MyPrefix
-AWS_REGION ?= eu-west-1
+AWS_REGION ?= eu-west-3
+AWS_SES_REGION ?= eu-west-1
 ENV ?= dev
 ###############################################
 

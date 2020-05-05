@@ -73,7 +73,7 @@ Resources:
           Statement:
             - Effect: Allow
               Action:
-              - s3:List*
+                - s3:List*
               Resource: [
                 "arn:aws:s3:::*"
               ]
@@ -90,5 +90,4 @@ Resources:
       Tags:
         Project: !Ref PROJECT
         Environment: !Ref ENV
-        MONITORING_BUCKETS_Name: !Ref MONITORINGBUCKETS
         Region: !Ref AWSREGION
