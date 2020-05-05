@@ -5,7 +5,7 @@ import os
 from botocore.exceptions import ClientError
 
 # Config
-bucket_names = os.environ['MONITORINGBUCKETS'].split()
+bucket_names = os.environ['MONITORINGBUCKETS'].split(",")
 s3_prefix = os.environ['S3PREFIX']
 recipients = os.environ['RECIPIENTS'].split()
 subject = 'S3 Backup Notifier - Backup Failed ❌'
