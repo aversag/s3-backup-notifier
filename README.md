@@ -50,9 +50,10 @@ Deploy CloudFormation stack.
 $ make deploy \
     PROJECT=<your_project_name> \
     ENV=<your_env> \
-    MONITORING_BUCKETS=<buckets_to_monitor> \
+    S3_PREFIX=<buckets_pattern> \
+    BUCKETS_BLACKLIST=<buckets_to_exclude> \
     SENDER=<sender_email> \
-    RECIPIENTS='<recipient_email1> <recipient_email2>' \
+    RECIPIENTS='recipient_email1,recipient_email2' \
     AWS_REGION='<your_aws_region>' \
     AWS_SES_REGION='<your_aws_ses_region>' \
     BOTOLAYER='<your-boto-layer-name-in-arn>' \

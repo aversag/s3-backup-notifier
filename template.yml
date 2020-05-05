@@ -20,10 +20,10 @@ Parameters:
     Type: String
     Default: eu-west-1
     Description: AWS SES Region
-  MONITORINGBUCKETS:
+  BUCKETSBLACKLIST:
     Type: String
     Default: no_bucket_defined
-    Description: AWS S3 Bucket
+    Description: AWS S3 Bucket to exclude
   S3PREFIX:
     Type: String
     Default: no_prefix_defined
@@ -61,8 +61,8 @@ Resources:
         - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:layer:${BOTOLAYER}:${BOTOLAYERVERSION}'
       Environment:
         Variables:
-          MONITORINGBUCKETS: !Ref MONITORINGBUCKETS
           S3PREFIX: !Ref S3PREFIX
+          BUCKETSBLACKLIST: !Ref BUCKETSBLACKLIST
           RECIPIENTS: !Ref RECIPIENTS
           SENDER: !Ref SENDER
           AWSREGION: !Ref AWSREGION

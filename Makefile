@@ -18,10 +18,10 @@ DESCRIPTION := S3 Backup Notifier
 
 ################## Variables ##################
 S3_BUCKET ?= ${PROJECT}-artifacts
-MONITORING_BUCKETS := backup.bucket
+S3_PREFIX := MyPrefix
+BUCKETS_BLACKLIST := backup.bucket
 RECIPIENTS := david@doe.com
 SENDER := john@doe.com
-S3_PREFIX := MyPrefix
 AWS_REGION ?= eu-west-3
 AWS_SES_REGION ?= eu-west-1
 ENV ?= dev
@@ -51,7 +51,7 @@ deploy:
 			--capabilities CAPABILITY_IAM \
 			--parameter-overrides \
 				ENV=${ENV} \
-				MONITORINGBUCKETS=${MONITORING_BUCKETS} \
+				BUCKETS_BLACKLIST=${BUCKETS_BLACKLIST} \
 				S3PREFIX=${S3_PREFIX} \
 				PROJECT=${PROJECT} \
 				RECIPIENTS=${RECIPIENTS} \

@@ -5,10 +5,9 @@ import os
 from botocore.exceptions import ClientError
 
 # Config
-bucket_names = os.environ['MONITORINGBUCKETS'].split(",")
+bucket_blacklist = os.environ['BUCKETSBLACKLIST'].split(",")
 s3_prefix = os.environ['S3PREFIX']
-recipients = os.environ['RECIPIENTS'].split()
-subject = 'S3 Backup Notifier - Backup Failed ❌'
+recipients = os.environ['RECIPIENTS'].split(",")
 sender = "S3 Backup Notifier <" + os.environ['SENDER'] + ">"
 aws_region = os.environ['AWSREGION']
 if 'AWSSESREGION' in os.environ:
@@ -23,6 +22,8 @@ today = datetime.date.today()
 session = boto3.Session(region_name=aws_region)
 s3 = session.resource('s3')
 ses = session.client('ses', region_name=aws_ses_region)
+bucket_names = s3.buckets.all()
+
 
 # Convert to Human Readable
 def sizeof_fmt(num, suffix='B'):
@@ -36,8 +37,13 @@ def sizeof_fmt(num, suffix='B'):
 def main(event, context):
     try:
         for bucket_name in bucket_names:
-            print("Looking into bucket " + str(bucket_name))
-            bucket = s3.Bucket(bucket_name)
+            if not bucket_name.name.startswith(s3_prefix):
+                continue
+            
+            if bucket_name.name in bucket_blacklist:
+                continue
+
+            bucket = s3.Bucket(bucket_name.name)
             objs = bucket.objects.filter(Prefix=s3_prefix).all()
 
             backup_success = 0
@@ -51,7 +57,7 @@ def main(event, context):
                     print("--> " + str(file_date), file_name, file_size)
                     backup_success = 1
             if backup_success == 0:
-                notification(file_date=file_date, file_name=file_name, file_size=file_size)
+                notification(bucket_name=bucket_name.name, file_date=file_date, file_name=file_name, file_size=file_size)
                 print("No backup detected from today: " + str(today))
                 print("--> Last backup file: " + str(file_date), file_name, file_size)
     except botocore.exceptions.ClientError as e:
@@ -63,7 +69,7 @@ def main(event, context):
             print(e)
 
 
-def notification(file_date, file_name, file_size):
+def notification(bucket_name, file_date, file_name, file_size):
     try:
         CHARSET = "UTF-8"
         # Email body for recipients with non-HTML email clients.
@@ -105,7 +111,7 @@ def notification(file_date, file_name, file_size):
                 },
                 'Subject': {
                     'Charset': CHARSET,
-                    'Data': subject,
+                    'Data': 'S3 Backup Notifier - Backup Failed ❌' + str(bucket_name),
                 },
             },
             Source=sender,
@@ -116,6 +122,7 @@ def notification(file_date, file_name, file_size):
     else:
         print("Email sent! Message ID:"),
         print(response['MessageId'])
+
 
 # Run locally for testing purpose
 if __name__ == '__main__':
