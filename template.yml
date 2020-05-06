@@ -86,7 +86,7 @@ Resources:
           Type: Schedule
           Properties:
             Name: s3-monitor-schedule
-            Schedule: cron(0 4 * * ? *)
+            Schedule: cron(0 10 * * ? *)
       Tags:
         Project: !Ref PROJECT
         Environment: !Ref ENV
