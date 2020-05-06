@@ -37,7 +37,8 @@ $ make layer
 And AWS Lambda function package.
 
 ```bash
-$ make package
+$ make package \
+    PROJECT=<your_project_name>
 ```
 
 ### Deploy
