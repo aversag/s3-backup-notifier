@@ -1,9 +1,9 @@
-AWSTemplateFormatVersion: "2010-09-09"
-Transform: "AWS::Serverless-2016-10-31"
-Description: Provision the AWS Lambda function of s3-monitor - https://zoph.io
-############################################################
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: 'AWS::Serverless-2016-10-31'
+Description: Provision the AWS Lambda function of s3-monitor
+###########################################################
 Parameters:
-  ############################################################
+###########################################################
   ENV:
     Type: String
     Default: dev
@@ -14,149 +14,72 @@ Parameters:
     Description: Project name
   AWSREGION:
     Type: String
-    Default: eu-west-1
+    Default: eu-west-3
     Description: AWS Region
-  MONITORINGBUCKET:
+  BUCKETSBLACKLIST:
     Type: String
-    Default: no_bucket_vars_definied
-    Description: Monitored bucket name
+    Default: no_bucket_defined
+    Description: AWS S3 Bucket to exclude
   S3PREFIX:
     Type: String
     Default: no_prefix_defined
     Description: S3 prefix to monitor
-  RECIPIENTS:
+  BOTOLAYER:
     Type: String
-    Default: no_recipients_defined@domain.com
-    Description: Recipients emails addresses
-  SENDER:
+    Default: boto3
+    Description: Layer name for boto3
+  BOTOLAYERVERSION:
+    Type: Number
+    Default: 9
+    Description: Layer version
+  SLACKWEBHOOKURL:
     Type: String
-    Default: no_sender_defined@domain.com
-    Description: Sender email addresses
-  CRONENABLED:
-    Type: String
-    Default: ENABLED
-    Description: Enable Schedule or not
-###########################################################
-Conditions:
-  ###########################################################
-  IsProdEnvironment: !Equals [!Ref ENV, prod]
+    Default: no_slack_webhook_defined
+    Description: Slack Webhook URL
 ###########################################################
 Resources:
-  ###########################################################
+###########################################################
   s3monitor:
-    Type: "AWS::Serverless::Function"
+    Type: 'AWS::Serverless::Function'
     Properties:
-      FunctionName: !Sub ${PROJECT}-${ENV}
-      Description: !Sub "[${ENV}] S3 Backup Monitor (${PROJECT}) - https://zoph.io"
+      FunctionName: !Sub s3-monitor-${ENV}
+      Description: !Sub S3 Backup Monitor (${PROJECT})
       Handler: handlers.main
-      Runtime: python3.10
+      Runtime: python3.9
       CodeUri: ./python
       MemorySize: 128
-      Timeout: 30
-      Architectures:
-        - arm64
+      Timeout: 300
+      Layers:
+        - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:layer:${BOTOLAYER}:${BOTOLAYERVERSION}'
       Environment:
         Variables:
-          MONITORINGBUCKET: !Ref MONITORINGBUCKET
           S3PREFIX: !Ref S3PREFIX
+          BUCKETSBLACKLIST: !Ref BUCKETSBLACKLIST
           RECIPIENTS: !Ref RECIPIENTS
           SENDER: !Ref SENDER
           AWSREGION: !Ref AWSREGION
+          AWSSESREGION: !Ref AWSSESREGION
       Policies:
         - AWSLambdaExecute # Managed Policy
-        - Version: "2012-10-17" # Policy Document
+        - Version: '2012-10-17' # Policy Document
           Statement:
             - Effect: Allow
               Action:
                 - s3:List*
-              Resource: !Sub "arn:aws:s3:::${MONITORINGBUCKET}"
+              Resource: [
+                "arn:aws:s3:::*"
+              ]
             - Effect: Allow
               Action:
                 - ses:SendEmail
-              Resource: "*"
+              Resource: '*'
+      Events:
+        Timer:
+          Type: Schedule
+          Properties:
+            Name: s3-monitor-schedule
+            Schedule: cron(0 10 * * ? *)
       Tags:
         Project: !Ref PROJECT
         Environment: !Ref ENV
-        MonitoredBucketName: !Ref MONITORINGBUCKET
         Region: !Ref AWSREGION
-        Reference: "https://zoph.io"
-
-  S3MonitorLogGroup:
-    UpdateReplacePolicy: Delete
-    DeletionPolicy: Delete
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub "/aws/lambda/${PROJECT}-${ENV}"
-      RetentionInDays: 14 # You can adjust the retention period as needed
-
-  LambdaSchedule:
-    Type: AWS::Events::Rule
-    Properties:
-      State: !Ref CRONENABLED
-      ScheduleExpression: cron(0 10 * * ? *)
-      Description: !Sub Lambda Schedule for ${PROJECT}
-      Targets:
-        - Id: s3-monitor-event-schedule
-          Arn:
-            Fn::GetAtt:
-              - s3monitor
-              - Arn
-
-  LambdaInvokePermission:
-    # https://docs.aws.amazon.com/AmazonCloudWatch/latest/events/CWE_Troubleshooting.html#LAMfunctionNotInvoked
-    Type: "AWS::Lambda::Permission"
-    Properties:
-      FunctionName: !GetAtt s3monitor.Arn
-      Action: "lambda:InvokeFunction"
-      Principal: events.amazonaws.com
-      SourceArn: !GetAtt LambdaSchedule.Arn
-
-  InvokConfig:
-    Type: AWS::Lambda::EventInvokeConfig
-    Properties:
-      FunctionName: !Ref s3monitor
-      Qualifier: $LATEST
-      MaximumRetryAttempts: 0
-
-  CloudWatchLogsMetricsFilter:
-    DependsOn: S3MonitorLogGroup
-    Type: AWS::Logs::MetricFilter
-    Properties:
-      FilterPattern: "ERROR"
-      LogGroupName: !Sub "/aws/lambda/${PROJECT}-${ENV}"
-      MetricTransformations:
-        - MetricValue: "1"
-          MetricNamespace: !Sub "${PROJECT}-${ENV}"
-          MetricName: "ERROR"
-          DefaultValue: 0
-
-  ErrorAlarm:
-    Type: "AWS::CloudWatch::Alarm"
-    Properties:
-      ActionsEnabled: true
-      AlarmActions:
-        - !Ref AlertingTopic
-      AlarmDescription: !Sub >
-        Alarm for ERROR on ${PROJECT} Lambda function
-      ComparisonOperator: GreaterThanOrEqualToThreshold
-      EvaluationPeriods: 1
-      MetricName: ERROR
-      Namespace: !Sub "${PROJECT}-${ENV}"
-      OKActions:
-        - !Ref AlertingTopic
-      Period: 10
-      Statistic: Sum
-      Threshold: 1
-      TreatMissingData: ignore
-
-  AlertingTopic:
-    Type: "AWS::SNS::Topic"
-    Properties:
-      DisplayName: !Sub "[${ENV}] Alarm Topic for ${PROJECT}"
-      Subscription:
-        - Protocol: email
-          Endpoint: !Select [0, !Split [" ", !Ref RECIPIENTS]]
-
-Outputs:
-  IsProdEnv:
-    Value: !If [IsProdEnvironment, true, false]

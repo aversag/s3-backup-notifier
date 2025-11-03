@@ -1,71 +1,76 @@
-# S3 Backup Notifier
+# S3 Backup Notifier :envelope:
 
-S3 Backup Notifier is a serverless application designed to monitor a specific prefix in Amazon S3 buckets. It checks daily for the latest object in a specified S3 bucket and sends an alert email via AWS Simple Email Service (SES) if no new backup is detected for the current day.
+![Deploy s3-backup-notifier](https://github.com/z0ph/s3-backup-notifier/workflows/Deploy%20s3-backup-notifier/badge.svg?branch=master)
 
-## Use Case
+s3 backup notifier intends to `daily` check the last object date in an AWS S3 bucket, and if it's older than today, send alerting email via AWS Simple Email Service (SES).
 
-This tool is ideal for monitoring the effectiveness of backup systems, such as home automation systems, and ensuring timely alerts for any failed backup attempts from outside.
+I'm using this to monitor the effectiveness of backup of my home automation systems and be alerted on any backup related issue.
 
-## Technical Details
+## Technical details
 
-- **Serverless Architecture**: Utilizes AWS Lambda functions written in Python.
-- **Scheduled Execution**: Lambda functions are triggered daily using AWS CloudWatch Events.
-- **Email Notifications**: Alerts are sent using AWS Simple Email Service (SES).
+> Fully serverless.
 
-> Note: Deployment for personal use is automated using GitHub Actions. Refer to the associated [workflow](.github/workflows/main.yml).
+* Uses AWS Lambda function (Python)
+* Rely on AWS Lambda layer for `boto3` and `botocore`
+* Scheduled Lambda (`daily`) using CloudWatch Events
+* Uses AWS Simple Email Service (SES) for Emails Notifications
+
+Nb: deployment for my own usage is done using Github Actions, you can check the associated [workflow](.github/workflows/main.yml).
 
 ## Installation
 
 ### Requirements
 
-- **AWS Credentials**: Configure your AWS credentials. It's recommended to use [aws-vault](https://github.com/99designs/aws-vault) for secure storage.
-- **S3 Bucket**: Create a bucket named `<project_name>-artifacts`. It's advisable to enable versioning and encryption for security.
+* Configure AWS Credentials (prefer [aws-vault](https://github.com/99designs/aws-vault))
+* Create a bucket called: `<project_name>-artifacts` (Prefer versioned and encrypted)
 
-> The project uses the [AWS Serverless Application Model (SAM)](https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md) for deployment.
+> Its using [AWS Serverless Application Model (SAM)](https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md)
 
-### :woman_factory_worker: Build & Deploy
+### Build
 
-#### Build AWS Lambda Function Package
+Build layer and note the ARN for the deploy step.
 
 ```bash
-$ make package
+$ make layer
 ```
 
-#### Deploy CloudFormation Stack
+And AWS Lambda function package.
 
-> Note: The `RECIPIENTS` variable should be space-separated.
+```bash
+$ make package \
+    PROJECT=<your_project_name>
+```
+
+### Deploy
+
+Deploy CloudFormation stack.
+
+> RECIPIENTS var is space-separated
 
 ```bash
 $ make deploy \
     PROJECT=<your_project_name> \
     ENV=<your_env> \
-    MONITORING_BUCKET=<bucket_to_monitor> \
-    S3_PREFIX=<s3_prefix> \
+    S3_PREFIX=<buckets_pattern> \
+    BUCKETS_BLACKLIST=<buckets_to_exclude> \
     SENDER=<sender_email> \
-    RECIPIENTS='<recipient_email1> <recipient_email2>' \
-    AWS_REGION='<your_aws_region>'
+    RECIPIENTS='recipient_email1,recipient_email2' \
+    AWS_REGION='<your_aws_region>' \
+    AWS_SES_REGION='<your_aws_ses_region>' \
+    BOTOLAYER='<your-boto-layer-name-in-arn>' \
+    BOTOLAYERVERSION='<your-boto-layer-version-in-arn>'
 ```
 
 ### Cleaning
 
-Remove unused folders and files after deploying your stack.
+Remove unused folders and files after the deployment of your stack.
 
 ```bash
-$ make clean
+$ make cleaning
 ```
 
-### Destroy Stack
-
-To remove the deployed stack, use the following command:
+### Destroy
 
 ```bash
 $ make tear-down
 ```
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

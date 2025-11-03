@@ -1,18 +1,14 @@
-name: "[Master] GhA - Deploy s3-backup-notifier"
+name: "deploy s3-backup-notifier"
 
-on:
+on: 
   push:
     branches:
-      - master
-
-env:
-  schedule: "DISABLED"
+    - master
 
 jobs:
   aws_sam:
     runs-on: ubuntu-latest
     steps:
-      # Configure AWS credentials
       - name: Assume Role
         uses: aws-actions/configure-aws-credentials@v1
         with:
@@ -23,38 +19,26 @@ jobs:
           role-duration-seconds: 1200
           role-session-name: GH-Actions
 
-      # Checkout the repository
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@master
 
-      # Test AWS credentials
       - name: Test credentials - whoami
-        run: aws sts get-caller-identity
+        run: |
+          aws sts get-caller-identity
 
-      # Build the SAM application
       - name: sam build
-        uses: aws-actions/aws-sam-cli-action@v1
+        uses: TractorZoom/sam-cli-action@master
         with:
-          args: build -b ./build
+          sam_command: build -b ./build
 
-      # Deploy the SAM application
       - name: sam deploy
-        uses: aws-actions/aws-sam-cli-action@v1
+        uses: TractorZoom/sam-cli-action@master
         with:
-          args: |
+          sam_command: |
             deploy \
               --template-file build/template.yaml \
-              --stack-name ${{ secrets.PROJECT }}-dev \
+              --stack-name ${{ secrets.PROJECT }}-${{ secrets.ENV }} \
               --s3-bucket ${{ secrets.PROJECT }}-artifacts \
               --region ${{ secrets.REGION }} \
               --no-fail-on-empty-changeset \
-              --parameter-overrides \
-                ENV=dev \
-                MONITORINGBUCKET=${{ secrets.MONITORINGBUCKET }} \
-                S3PREFIX=${{ secrets.S3PREFIX }} \
-                PROJECT=${{ secrets.PROJECT }} \
-                RECIPIENTS=${{ secrets.RECIPIENTS }} \
-                SENDER=${{ secrets.SENDER }} \
-                AWSREGION=${{ secrets.REGION }} \
-                CRONENABLED=${{ env.schedule }} \
-              --capabilities CAPABILITY_IAM
+              --parameter-overrides ENV=${{ secrets.ENV }} MONITORINGBUCKETS=${{ secrets.MONITORINGBUCKETS }} S3PREFIX=${{ secrets.S3PREFIX }} PROJECT=${{ secrets.PROJECT }} RECIPIENTS=${{ secrets.RECIPIENTS }} SENDER=${{ secrets.SENDER }} AWSREGION=${{ secrets.REGION }} --capabilities CAPABILITY_IAM
