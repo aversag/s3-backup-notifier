@@ -32,6 +32,18 @@ Parameters:
     Type: Number
     Default: 9
     Description: Layer version
+  RECIPIENTS:
+    Type: String
+    Default: ''
+    Description: Email recipients (comma-separated)
+  SENDER:
+    Type: String
+    Default: ''
+    Description: Email sender address
+  AWSSESREGION:
+    Type: String
+    Default: eu-west-3
+    Description: AWS SES Region
   SLACKWEBHOOKURL:
     Type: String
     Default: no_slack_webhook_defined
