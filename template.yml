@@ -36,6 +36,10 @@ Parameters:
     Type: String
     Default: no_slack_webhook_defined
     Description: Slack Webhook URL
+  SIZETHRESHOLDPERCENT:
+    Type: Number
+    Default: 50
+    Description: Size threshold percentage to trigger alert (e.g. 50 means alert if today's backup is less than 50% of previous)
 ###########################################################
 Resources:
 ###########################################################
@@ -59,6 +63,8 @@ Resources:
           SENDER: !Ref SENDER
           AWSREGION: !Ref AWSREGION
           AWSSESREGION: !Ref AWSSESREGION
+          SLACK_WEBHOOK_URL: !Ref SLACKWEBHOOKURL
+          SIZE_THRESHOLD_PERCENT: !Ref SIZETHRESHOLDPERCENT
       Policies:
         - AWSLambdaExecute # Managed Policy
         - Version: '2012-10-17' # Policy Document

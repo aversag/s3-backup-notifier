@@ -29,11 +29,11 @@ def sizeof_fmt(num, suffix='B'):
 
 
 def main(event, context):
-    notification_method = os.environ.get('NOTIFICATION_METHOD', 'email')  # 'email' or 'slack'
+    size_threshold_percent = int(os.environ.get('SIZE_THRESHOLD_PERCENT', '50'))
     for bucket_name in bucket_names:
         if not bucket_name.name.startswith(s3_prefix):
             continue
-        
+
         if bucket_name.name in bucket_blacklist:
             continue
 
@@ -41,30 +41,51 @@ def main(event, context):
             print("Bucket --> " + str(bucket_name.name))
             bucket = s3.Bucket(bucket_name.name)
             objs = bucket.objects.all()
-            
-            root_objs = [obj for obj in objs if '/' not in obj.key]
+
+            root_objs = sorted(
+                [obj for obj in objs if '/' not in obj.key],
+                key=lambda o: o.last_modified,
+                reverse=True
+            )
             if not root_objs:
                 continue
 
-            backup_success = 0
-            file_date = 0
-            file_name = ''
-            file_size = 0
+            today_objs = [obj for obj in root_objs if obj.last_modified.date() == today]
+            previous_objs = [obj for obj in root_objs if obj.last_modified.date() < today]
+
             for obj in root_objs:
                 print(obj.last_modified.date(), obj.key, sizeof_fmt(obj.size))
-                file_date = obj.last_modified.date()
-                file_name = obj.key
-                file_size = sizeof_fmt(obj.size)
-                if obj.last_modified.date() == today:
-                    print("Backup OK, All Good")
-                    print("--> " + str(file_date), file_name, file_size)
-                    backup_success = 1
-                    
-            if backup_success == 0:
-                notification(bucket_name.name, file_date=file_date, file_name=str(file_name), file_size=str(file_size))
+
+            if not today_objs:
+                last = root_objs[0]
+                notification(
+                    bucket_name.name,
+                    file_date=last.last_modified.date(),
+                    file_name=last.key,
+                    file_size=sizeof_fmt(last.size),
+                    alert_type="missing"
+                )
                 print("No backup detected from today: " + str(today))
-                print("--> Last backup file: " + str(file_date), file_name, file_size)
-                
+                print("--> Last backup file: " + str(last.last_modified.date()), last.key, sizeof_fmt(last.size))
+            else:
+                today_obj = today_objs[0]
+                print("Backup OK, All Good")
+                print("--> " + str(today_obj.last_modified.date()), today_obj.key, sizeof_fmt(today_obj.size))
+
+                if previous_objs:
+                    prev_obj = previous_objs[0]
+                    if prev_obj.size > 0 and today_obj.size < prev_obj.size * size_threshold_percent / 100:
+                        notification(
+                            bucket_name.name,
+                            file_date=today_obj.last_modified.date(),
+                            file_name=today_obj.key,
+                            file_size=sizeof_fmt(today_obj.size),
+                            alert_type="size",
+                            prev_file_name=prev_obj.key,
+                            prev_file_size=sizeof_fmt(prev_obj.size)
+                        )
+                        print(f"Size alert: {sizeof_fmt(today_obj.size)} vs previous {sizeof_fmt(prev_obj.size)}")
+
         except botocore.exceptions.ClientError as e:
             error_code = e.response['Error']['Code']
             print(e.response['Error']['Message'])
@@ -74,9 +95,25 @@ def main(event, context):
                 print(e)
 
 
-def notification(bucket_name, file_date, file_name, file_size):
-    subject = 'S3 Backup failed ❌ ' + bucket_name
-    message = f"S3 Backup Notifier\nLast backup comes from:\nDate: {file_date}\nName: {file_name}\nSize: {file_size}"
+def notification(bucket_name, file_date, file_name, file_size, alert_type="missing", prev_file_name=None, prev_file_size=None):
+    if alert_type == "size":
+        subject = f"S3 Backup suspicious size ⚠️ {bucket_name}"
+        message = (
+            f"S3 Backup Notifier\n"
+            f"Today's backup is abnormally small:\n"
+            f"Today: {file_name} ({file_size})\n"
+            f"Previous: {prev_file_name} ({prev_file_size})"
+        )
+    else:
+        subject = f"S3 Backup failed ❌ {bucket_name}"
+        message = (
+            f"S3 Backup Notifier\n"
+            f"Last backup comes from:\n"
+            f"Date: {file_date}\n"
+            f"Name: {file_name}\n"
+            f"Size: {file_size}"
+        )
+
     if slack_webhook_url:
         slack_payload = {
             "text": f"*{subject}*\n{message}"
