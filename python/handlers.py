@@ -136,6 +136,87 @@ def notification(bucket_name, file_date, file_name, file_size, alert_type="missi
         print("Slack webhook URL not configured. Notification not sent.")
 
 
+def report(event, context):
+    size_threshold_percent = int(os.environ.get('SIZE_THRESHOLD_PERCENT', '50'))
+    lines = []
+    ok_count = 0
+    total_count = 0
+
+    for bucket_name in bucket_names:
+        if not bucket_name.name.startswith(s3_prefix):
+            continue
+        if bucket_name.name in bucket_blacklist:
+            continue
+
+        total_count += 1
+        name = bucket_name.name
+
+        try:
+            bucket = s3.Bucket(name)
+            objs = bucket.objects.all()
+            root_objs = sorted(
+                [obj for obj in objs if '/' not in obj.key],
+                key=lambda o: o.last_modified,
+                reverse=True
+            )
+
+            if not root_objs:
+                lines.append(f"❌ `{name}` — empty bucket")
+                continue
+
+            today_objs = [obj for obj in root_objs if obj.last_modified.date() == today]
+
+            if not today_objs:
+                last = root_objs[0]
+                lines.append(f"❌ `{name}` — no backup today (last: {last.last_modified.date()})")
+                continue
+
+            today_total = sum(obj.size for obj in today_objs)
+            file_count = len(today_objs)
+
+            # Compute variation against avg of last 3 days
+            daily_sizes = {}
+            for obj in root_objs:
+                d = obj.last_modified.date()
+                if d < today:
+                    daily_sizes[d] = daily_sizes.get(d, 0) + obj.size
+
+            recent_days = sorted(daily_sizes.keys(), reverse=True)[:3]
+            variation = ""
+            is_suspicious = False
+            if recent_days:
+                avg_size = sum(daily_sizes[d] for d in recent_days) / len(recent_days)
+                if avg_size > 0:
+                    pct = ((today_total - avg_size) / avg_size) * 100
+                    arrow = "↑" if pct >= 0 else "↓"
+                    variation = f" ({arrow} {pct:+.0f}%)"
+                    if today_total < avg_size * size_threshold_percent / 100:
+                        is_suspicious = True
+
+            if is_suspicious:
+                lines.append(f"⚠️ `{name}` — {file_count} files, {sizeof_fmt(today_total)}{variation}")
+            else:
+                lines.append(f"✅ `{name}` — {file_count} files, {sizeof_fmt(today_total)}{variation}")
+                ok_count += 1
+
+        except botocore.exceptions.ClientError as e:
+            lines.append(f"❌ `{name}` — error: {e.response['Error']['Message']}")
+
+    header = f"*📊 S3 Backup Report — {today}*\n"
+    footer = f"\n*Total: {ok_count}/{total_count} buckets OK*"
+    message = header + "\n".join(lines) + footer
+
+    print(message)
+
+    if slack_webhook_url:
+        try:
+            response = requests.post(slack_webhook_url, json={"text": message})
+            response.raise_for_status()
+            print("Report sent to Slack!")
+        except Exception as e:
+            print(f"Slack report failed: {e}")
+
+
 # Run locally for testing purpose
 if __name__ == '__main__':
     main(0, 0)

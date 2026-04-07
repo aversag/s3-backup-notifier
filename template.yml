@@ -101,3 +101,41 @@ Resources:
         Project: !Ref PROJECT
         Environment: !Ref ENV
         Region: !Ref AWSREGION
+  s3report:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub s3-report-${ENV}
+      Description: !Sub S3 Backup Daily Report (${PROJECT})
+      Handler: handlers.report
+      Runtime: python3.9
+      CodeUri: ./python
+      MemorySize: 128
+      Timeout: 900
+      Layers:
+        - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:layer:${BOTOLAYER}:${BOTOLAYERVERSION}'
+      Environment:
+        Variables:
+          S3PREFIX: !Ref S3PREFIX
+          BUCKETSBLACKLIST: !Ref BUCKETSBLACKLIST
+          AWSREGION: !Ref AWSREGION
+          SLACK_WEBHOOK_URL: !Ref SLACKWEBHOOKURL
+          SIZE_THRESHOLD_PERCENT: !Ref SIZETHRESHOLDPERCENT
+      Policies:
+        - AWSLambdaExecute
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - s3:List*
+              Resource:
+                - "arn:aws:s3:::*"
+      Events:
+        Timer:
+          Type: Schedule
+          Properties:
+            Name: s3-report-schedule
+            Schedule: cron(0 10 * * ? *)
+      Tags:
+        Project: !Ref PROJECT
+        Environment: !Ref ENV
+        Region: !Ref AWSREGION
