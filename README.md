@@ -1,76 +1,111 @@
-# S3 Backup Notifier :envelope:
+# S3 Backup Notifier
 
-![Deploy s3-backup-notifier](https://github.com/z0ph/s3-backup-notifier/workflows/Deploy%20s3-backup-notifier/badge.svg?branch=master)
+Serverless AWS Lambda that monitors your S3 backup buckets daily and alerts you via Slack when something goes wrong.
 
-s3 backup notifier intends to `daily` check the last object date in an AWS S3 bucket, and if it's older than today, send alerting email via AWS Simple Email Service (SES).
+## What it does
 
-I'm using this to monitor the effectiveness of backup of my home automation systems and be alerted on any backup related issue.
+| Check | Alert |
+|---|---|
+| No backup file received today | `S3 Backup failed` |
+| Today's backup is abnormally small compared to the previous one | `S3 Backup suspicious size` |
 
-## Technical details
+The size comparison catches silent failures: a backup job that runs but produces a near-empty dump, a partial export, or a corrupted archive.
 
-> Fully serverless.
+## How it works
 
-* Uses AWS Lambda function (Python)
-* Rely on AWS Lambda layer for `boto3` and `botocore`
-* Scheduled Lambda (`daily`) using CloudWatch Events
-* Uses AWS Simple Email Service (SES) for Emails Notifications
-
-Nb: deployment for my own usage is done using Github Actions, you can check the associated [workflow](.github/workflows/main.yml).
-
-## Installation
-
-### Requirements
-
-* Configure AWS Credentials (prefer [aws-vault](https://github.com/99designs/aws-vault))
-* Create a bucket called: `<project_name>-artifacts` (Prefer versioned and encrypted)
-
-> Its using [AWS Serverless Application Model (SAM)](https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md)
-
-### Build
-
-Build layer and note the ARN for the deploy step.
-
-```bash
-$ make layer
+```
+CloudWatch Events (daily cron)
+        |
+        v
+   AWS Lambda (Python)
+        |
+        +--> List all S3 buckets matching a prefix
+        +--> Skip blacklisted buckets
+        +--> For each bucket:
+        |       - Check if a file was uploaded today
+        |       - Compare today's file size vs previous day
+        |
+        +--> Slack webhook notification on failure
 ```
 
-And AWS Lambda function package.
+## Configuration
+
+| Environment Variable | Description | Default |
+|---|---|---|
+| `S3PREFIX` | Bucket name prefix to monitor | - |
+| `BUCKETSBLACKLIST` | Comma-separated bucket names to skip | - |
+| `SLACK_WEBHOOK_URL` | Slack incoming webhook URL | - |
+| `SIZE_THRESHOLD_PERCENT` | Alert if today's size < X% of previous | `50` |
+| `AWSREGION` | AWS region | `eu-west-3` |
+
+## Deployment
+
+### Prerequisites
+
+- AWS CLI configured
+- [AWS SAM CLI](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html) installed
+- An S3 bucket named `<project>-artifacts` for deployment artifacts
+
+### Quick deploy
 
 ```bash
-$ make package \
-    PROJECT=<your_project_name>
+export S3PREFIX=backup
+export BUCKETSBLACKLIST=bucket-to-skip-1,bucket-to-skip-2
+export SLACK_WEBHOOK_URL=https://hooks.slack.com/services/xxx/xxx/xxx
+export SIZE_THRESHOLD_PERCENT=50
+
+./deploy.sh
 ```
 
-### Deploy
+### CI/CD
 
-Deploy CloudFormation stack.
+Deployment is automated via [GitHub Actions](.github/workflows/main.yml) on push to `master`.
 
-> RECIPIENTS var is space-separated
+Required GitHub secrets:
+
+| Secret | Description |
+|---|---|
+| `AWS_ACCESS_KEY_ID` | AWS credentials |
+| `AWS_SECRET_ACCESS_KEY` | AWS credentials |
+| `ROLE_TO_ASSUME` | IAM role ARN for deployment |
+| `REGION` | AWS region |
+| `PROJECT` | Project name (default: `s3monitoring`) |
+| `ENV` | Environment (e.g. `prod`) |
+| `S3PREFIX` | Bucket prefix to monitor |
+| `BUCKETSBLACKLIST` | Buckets to exclude |
+| `SLACK_WEBHOOK_URL` | Slack webhook URL |
+| `SIZE_THRESHOLD_PERCENT` | Size alert threshold |
+
+### Manual deploy (Makefile)
 
 ```bash
-$ make deploy \
-    PROJECT=<your_project_name> \
-    ENV=<your_env> \
-    S3_PREFIX=<buckets_pattern> \
-    BUCKETS_BLACKLIST=<buckets_to_exclude> \
-    SENDER=<sender_email> \
-    RECIPIENTS='recipient_email1,recipient_email2' \
-    AWS_REGION='<your_aws_region>' \
-    AWS_SES_REGION='<your_aws_ses_region>' \
-    BOTOLAYER='<your-boto-layer-name-in-arn>' \
-    BOTOLAYERVERSION='<your-boto-layer-version-in-arn>'
+# Build the Lambda layer
+make layer
+
+# Package
+make package PROJECT=s3monitoring
+
+# Deploy
+make deploy PROJECT=s3monitoring ENV=prod
+
+# Cleanup build artifacts
+make cleaning
+
+# Destroy the stack
+make tear-down
 ```
 
-### Cleaning
+## Slack notifications
 
-Remove unused folders and files after the deployment of your stack.
+**Missing backup:**
+> **S3 Backup failed** backup-mydb
+> Last backup comes from:
+> Date: 2026-04-05
+> Name: mydb-dump.sql.gz
+> Size: 12.4GiB
 
-```bash
-$ make cleaning
-```
-
-### Destroy
-
-```bash
-$ make tear-down
-```
+**Suspicious size:**
+> **S3 Backup suspicious size** backup-mydb
+> Today's backup is abnormally small:
+> Today: mydb-dump.sql.gz (1.2MiB)
+> Previous: mydb-dump.sql.gz (12.4GiB)
