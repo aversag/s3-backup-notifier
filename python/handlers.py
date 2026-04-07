@@ -51,7 +51,13 @@ def main(event, context):
                 continue
 
             today_objs = [obj for obj in root_objs if obj.last_modified.date() == today]
-            previous_objs = [obj for obj in root_objs if obj.last_modified.date() < today]
+
+            # Group files by day and sum sizes for the last 3 days
+            daily_sizes = {}
+            for obj in root_objs:
+                d = obj.last_modified.date()
+                if d < today:
+                    daily_sizes[d] = daily_sizes.get(d, 0) + obj.size
 
             for obj in root_objs:
                 print(obj.last_modified.date(), obj.key, sizeof_fmt(obj.size))
@@ -68,23 +74,25 @@ def main(event, context):
                 print("No backup detected from today: " + str(today))
                 print("--> Last backup file: " + str(last.last_modified.date()), last.key, sizeof_fmt(last.size))
             else:
-                today_obj = today_objs[0]
+                today_total = sum(obj.size for obj in today_objs)
                 print("Backup OK, All Good")
-                print("--> " + str(today_obj.last_modified.date()), today_obj.key, sizeof_fmt(today_obj.size))
+                print(f"--> Today: {len(today_objs)} files, total {sizeof_fmt(today_total)}")
 
-                if previous_objs:
-                    prev_obj = previous_objs[0]
-                    if prev_obj.size > 0 and today_obj.size < prev_obj.size * size_threshold_percent / 100:
+                # Compare against average of last 3 days
+                recent_days = sorted(daily_sizes.keys(), reverse=True)[:3]
+                if recent_days:
+                    avg_size = sum(daily_sizes[d] for d in recent_days) / len(recent_days)
+                    if avg_size > 0 and today_total < avg_size * size_threshold_percent / 100:
                         notification(
                             bucket_name.name,
-                            file_date=today_obj.last_modified.date(),
-                            file_name=today_obj.key,
-                            file_size=sizeof_fmt(today_obj.size),
+                            file_date=today,
+                            file_name=f"{len(today_objs)} files",
+                            file_size=sizeof_fmt(today_total),
                             alert_type="size",
-                            prev_file_name=prev_obj.key,
-                            prev_file_size=sizeof_fmt(prev_obj.size)
+                            prev_file_name=f"avg of last {len(recent_days)} days",
+                            prev_file_size=sizeof_fmt(avg_size)
                         )
-                        print(f"Size alert: {sizeof_fmt(today_obj.size)} vs previous {sizeof_fmt(prev_obj.size)}")
+                        print(f"Size alert: today {sizeof_fmt(today_total)} vs avg {sizeof_fmt(avg_size)}")
 
         except botocore.exceptions.ClientError as e:
             error_code = e.response['Error']['Code']
@@ -100,9 +108,9 @@ def notification(bucket_name, file_date, file_name, file_size, alert_type="missi
         subject = f"S3 Backup suspicious size ⚠️ {bucket_name}"
         message = (
             f"S3 Backup Notifier\n"
-            f"Today's backup is abnormally small:\n"
-            f"Today: {file_name} ({file_size})\n"
-            f"Previous: {prev_file_name} ({prev_file_size})"
+            f"Today's backup total size is abnormally small:\n"
+            f"Today: {file_name} — {file_size}\n"
+            f"Previous: {prev_file_name} — {prev_file_size}"
         )
     else:
         subject = f"S3 Backup failed ❌ {bucket_name}"
