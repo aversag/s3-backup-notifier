@@ -26,7 +26,12 @@ jobs:
       - name: Verify credentials
         run: aws sts get-caller-identity
 
-      - name: sam build
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+
+      - name: Set up SAM
         uses: aws-actions/setup-sam@v2
 
       - name: Build
