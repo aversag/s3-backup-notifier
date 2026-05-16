@@ -52,6 +52,10 @@ Parameters:
     Type: Number
     Default: 50
     Description: Size threshold percentage to trigger alert (e.g. 50 means alert if today's backup is less than 50% of previous)
+  BUCKETCOMPONENTS:
+    Type: String
+    Default: '{}'
+    Description: JSON mapping bucket name to list of expected components ("etc","boot","site","db"). Buckets not listed keep the legacy "at least one file today" check.
 ###########################################################
 Resources:
 ###########################################################
@@ -77,6 +81,7 @@ Resources:
           AWSSESREGION: !Ref AWSSESREGION
           SLACK_WEBHOOK_URL: !Ref SLACKWEBHOOKURL
           SIZE_THRESHOLD_PERCENT: !Ref SIZETHRESHOLDPERCENT
+          BUCKET_COMPONENTS: !Ref BUCKETCOMPONENTS
       Policies:
         - AWSLambdaExecute # Managed Policy
         - Version: '2012-10-17' # Policy Document
@@ -120,6 +125,7 @@ Resources:
           AWSREGION: !Ref AWSREGION
           SLACK_WEBHOOK_URL: !Ref SLACKWEBHOOKURL
           SIZE_THRESHOLD_PERCENT: !Ref SIZETHRESHOLDPERCENT
+          BUCKET_COMPONENTS: !Ref BUCKETCOMPONENTS
       Policies:
         - AWSLambdaExecute
         - Version: '2012-10-17'

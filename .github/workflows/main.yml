@@ -53,4 +53,5 @@ jobs:
               BUCKETSBLACKLIST=${{ secrets.BUCKETSBLACKLIST }} \
               AWSREGION=eu-west-3 \
               SLACKWEBHOOKURL=${{ secrets.SLACK_WEBHOOK_URL }} \
-              SIZETHRESHOLDPERCENT=${{ secrets.SIZE_THRESHOLD_PERCENT }}
+              SIZETHRESHOLDPERCENT=${{ secrets.SIZE_THRESHOLD_PERCENT }} \
+              "BUCKETCOMPONENTS=${{ secrets.BUCKET_COMPONENTS }}"
