@@ -293,6 +293,37 @@ def report(event, context):
             print(f"Slack report failed: {e}")
 
 
+def alarm_forwarder(event, context):
+    """Forward CloudWatch alarm notifications (received via SNS) to Slack.
+
+    Triggered by the alarmTopic SNS topic; one Lambda invocation per alarm
+    state transition. Keeps the message tight so it's readable on mobile.
+    """
+    if not slack_webhook_url:
+        print("No Slack webhook configured, skipping forward")
+        return
+
+    for record in event.get('Records', []):
+        sns = record.get('Sns', {})
+        raw = sns.get('Message', '')
+        try:
+            payload = json.loads(raw)
+            alarm = payload.get('AlarmName', 'unknown alarm')
+            state = payload.get('NewStateValue', 'UNKNOWN')
+            reason = payload.get('NewStateReason', '')
+            desc = payload.get('AlarmDescription', '')
+            icon = "🚨" if state == "ALARM" else ("✅" if state == "OK" else "⚠️")
+            text = f"*{icon} {alarm}* → `{state}`\n{desc}\n_{reason}_"
+        except Exception:
+            text = f"*AWS Alert*\n{raw[:1500]}"
+
+        try:
+            requests.post(slack_webhook_url, json={"text": text}, timeout=10).raise_for_status()
+            print(f"Forwarded alarm: {raw[:120]}")
+        except Exception as e:
+            print(f"Slack forward failed: {e}")
+
+
 # Run locally for testing purpose
 if __name__ == '__main__':
     main(0, 0)

@@ -145,3 +145,155 @@ Resources:
         Project: !Ref PROJECT
         Environment: !Ref ENV
         Region: !Ref AWSREGION
+
+  ##########################################################################
+  # Self-monitoring: alert when the monitoring Lambdas themselves fail.
+  # Both Lambdas already use the same Slack webhook for backup alerts, so
+  # the alarm forwarder reuses the same channel for consistency.
+  ##########################################################################
+
+  alarmTopic:
+    Type: 'AWS::SNS::Topic'
+    Properties:
+      TopicName: !Sub s3monitor-alarms-${ENV}
+      DisplayName: S3 monitor self-alarms
+
+  alarmForwarder:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub s3-monitor-alarm-forwarder-${ENV}
+      Description: !Sub Forwards CloudWatch alarms to Slack (${PROJECT})
+      Handler: handlers.alarm_forwarder
+      Runtime: python3.9
+      CodeUri: ./python
+      MemorySize: 128
+      Timeout: 30
+      Environment:
+        Variables:
+          SLACK_WEBHOOK_URL: !Ref SLACKWEBHOOKURL
+      Layers:
+        - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:layer:${BOTOLAYER}:${BOTOLAYERVERSION}'
+      Events:
+        AlarmSns:
+          Type: SNS
+          Properties:
+            Topic: !Ref alarmTopic
+      Tags:
+        Project: !Ref PROJECT
+        Environment: !Ref ENV
+
+  s3monitorErrorsAlarm:
+    Type: 'AWS::CloudWatch::Alarm'
+    Properties:
+      AlarmName: !Sub s3-monitor-${ENV}-errors
+      AlarmDescription: s3-monitor Lambda raised an unhandled error
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref s3monitor
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref alarmTopic
+
+  s3monitorDurationAlarm:
+    Type: 'AWS::CloudWatch::Alarm'
+    Properties:
+      AlarmName: !Sub s3-monitor-${ENV}-duration
+      AlarmDescription: s3-monitor Lambda is close to its 300s timeout (>250s)
+      Namespace: AWS/Lambda
+      MetricName: Duration
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref s3monitor
+      Statistic: Maximum
+      Period: 86400
+      EvaluationPeriods: 1
+      Threshold: 250000
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref alarmTopic
+
+  s3reportErrorsAlarm:
+    Type: 'AWS::CloudWatch::Alarm'
+    Properties:
+      AlarmName: !Sub s3-report-${ENV}-errors
+      AlarmDescription: s3-report Lambda raised an unhandled error
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref s3report
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref alarmTopic
+
+  s3reportDurationAlarm:
+    Type: 'AWS::CloudWatch::Alarm'
+    Properties:
+      AlarmName: !Sub s3-report-${ENV}-duration
+      AlarmDescription: s3-report Lambda is close to its 900s timeout (>800s)
+      Namespace: AWS/Lambda
+      MetricName: Duration
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref s3report
+      Statistic: Maximum
+      Period: 86400
+      EvaluationPeriods: 1
+      Threshold: 800000
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref alarmTopic
+
+  # Catch the case where the scheduled run never happens at all (Lambda
+  # never invoked → no Errors metric, no Duration metric, just silence).
+  s3monitorInvocationsAlarm:
+    Type: 'AWS::CloudWatch::Alarm'
+    Properties:
+      AlarmName: !Sub s3-monitor-${ENV}-no-invocations
+      AlarmDescription: s3-monitor Lambda did not run in the last 25h
+      Namespace: AWS/Lambda
+      MetricName: Invocations
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref s3monitor
+      Statistic: Sum
+      Period: 90000
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: breaching
+      AlarmActions:
+        - !Ref alarmTopic
+
+  s3reportInvocationsAlarm:
+    Type: 'AWS::CloudWatch::Alarm'
+    Properties:
+      AlarmName: !Sub s3-report-${ENV}-no-invocations
+      AlarmDescription: s3-report Lambda did not run in the last 25h
+      Namespace: AWS/Lambda
+      MetricName: Invocations
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref s3report
+      Statistic: Sum
+      Period: 90000
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: breaching
+      AlarmActions:
+        - !Ref alarmTopic
