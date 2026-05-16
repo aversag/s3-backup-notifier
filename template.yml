@@ -67,7 +67,7 @@ Resources:
       Handler: handlers.main
       Runtime: python3.9
       CodeUri: ./python
-      MemorySize: 128
+      MemorySize: 512
       Timeout: 300
       Layers:
         - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:layer:${BOTOLAYER}:${BOTOLAYERVERSION}'
@@ -114,7 +114,7 @@ Resources:
       Handler: handlers.report
       Runtime: python3.9
       CodeUri: ./python
-      MemorySize: 128
+      MemorySize: 512
       Timeout: 900
       Layers:
         - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:layer:${BOTOLAYER}:${BOTOLAYERVERSION}'

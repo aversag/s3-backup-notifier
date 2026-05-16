@@ -68,6 +68,18 @@ def _today_components(root_objs):
     return found
 
 
+def _list_root_objs(bucket_name):
+    """Return root-level objects only, sorted newest first.
+
+    Using Delimiter='/' lets S3 skip everything under sub-prefixes server-side
+    instead of streaming millions of keys to the Lambda just to filter them out.
+    """
+    bucket = s3.Bucket(bucket_name)
+    root_objs = list(bucket.objects.filter(Delimiter='/'))
+    root_objs.sort(key=lambda o: o.last_modified, reverse=True)
+    return root_objs
+
+
 def main(event, context):
     size_threshold_percent = int(os.environ.get('SIZE_THRESHOLD_PERCENT', '50'))
     for bucket_name in bucket_names:
@@ -79,14 +91,7 @@ def main(event, context):
 
         try:
             print("Bucket --> " + str(bucket_name.name))
-            bucket = s3.Bucket(bucket_name.name)
-            objs = bucket.objects.all()
-
-            root_objs = sorted(
-                [obj for obj in objs if '/' not in obj.key],
-                key=lambda o: o.last_modified,
-                reverse=True
-            )
+            root_objs = _list_root_objs(bucket_name.name)
             if not root_objs:
                 continue
 
@@ -220,13 +225,7 @@ def report(event, context):
         name = bucket_name.name
 
         try:
-            bucket = s3.Bucket(name)
-            objs = bucket.objects.all()
-            root_objs = sorted(
-                [obj for obj in objs if '/' not in obj.key],
-                key=lambda o: o.last_modified,
-                reverse=True
-            )
+            root_objs = _list_root_objs(name)
 
             if not root_objs:
                 lines.append(f"❌ `{name}` — empty bucket")
