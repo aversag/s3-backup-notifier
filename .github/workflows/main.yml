@@ -40,20 +40,31 @@ jobs:
       - name: Deploy
         env:
           BUCKET_COMPONENTS: ${{ secrets.BUCKET_COMPONENTS }}
+          BUCKETS_BLACKLIST: ${{ secrets.BUCKETSBLACKLIST }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          S3PREFIX_VAL: ${{ secrets.S3PREFIX }}
+          SIZE_THRESHOLD: ${{ secrets.SIZE_THRESHOLD_PERCENT }}
+          ENV_VAL: ${{ secrets.ENV }}
+          PROJECT_VAL: ${{ secrets.PROJECT }}
         run: |
+          # Build params array safely: each --parameter-overrides value is a
+          # single argv entry, so JSON quotes inside BUCKET_COMPONENTS are
+          # preserved verbatim (no shell re-parsing).
+          PARAMS=(
+            "ENV=$ENV_VAL"
+            "PROJECT=$PROJECT_VAL"
+            "S3PREFIX=$S3PREFIX_VAL"
+            "BUCKETSBLACKLIST=$BUCKETS_BLACKLIST"
+            "AWSREGION=eu-west-3"
+            "SLACKWEBHOOKURL=$SLACK_WEBHOOK_URL"
+            "SIZETHRESHOLDPERCENT=$SIZE_THRESHOLD"
+            "BUCKETCOMPONENTS=$BUCKET_COMPONENTS"
+          )
           sam deploy \
             --template-file build/template.yaml \
-            --stack-name ${{ secrets.PROJECT }}-${{ secrets.ENV }} \
-            --s3-bucket ${{ secrets.PROJECT }}-artifacts \
+            --stack-name "$PROJECT_VAL-$ENV_VAL" \
+            --s3-bucket "$PROJECT_VAL-artifacts" \
             --region eu-west-3 \
             --no-fail-on-empty-changeset \
             --capabilities CAPABILITY_IAM \
-            --parameter-overrides \
-              ENV=${{ secrets.ENV }} \
-              PROJECT=${{ secrets.PROJECT }} \
-              S3PREFIX=${{ secrets.S3PREFIX }} \
-              BUCKETSBLACKLIST=${{ secrets.BUCKETSBLACKLIST }} \
-              AWSREGION=eu-west-3 \
-              SLACKWEBHOOKURL=${{ secrets.SLACK_WEBHOOK_URL }} \
-              SIZETHRESHOLDPERCENT=${{ secrets.SIZE_THRESHOLD_PERCENT }} \
-              "BUCKETCOMPONENTS=$BUCKET_COMPONENTS"
+            --parameter-overrides "${PARAMS[@]}"
