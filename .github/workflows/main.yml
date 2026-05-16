@@ -38,6 +38,8 @@ jobs:
         run: sam build -b ./build
 
       - name: Deploy
+        env:
+          BUCKET_COMPONENTS: ${{ secrets.BUCKET_COMPONENTS }}
         run: |
           sam deploy \
             --template-file build/template.yaml \
@@ -54,4 +56,4 @@ jobs:
               AWSREGION=eu-west-3 \
               SLACKWEBHOOKURL=${{ secrets.SLACK_WEBHOOK_URL }} \
               SIZETHRESHOLDPERCENT=${{ secrets.SIZE_THRESHOLD_PERCENT }} \
-              "BUCKETCOMPONENTS=${{ secrets.BUCKET_COMPONENTS }}"
+              "BUCKETCOMPONENTS=$BUCKET_COMPONENTS"

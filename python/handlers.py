@@ -14,7 +14,7 @@ slack_webhook_url = os.environ.get('SLACK_WEBHOOK_URL')
 aws_region = os.environ['AWSREGION']
 
 # Optional per-bucket expected components, e.g.:
-# {"backup-medicercle-prod": ["etc","boot","site","db"], "backup-accopilot-postgres": ["db"]}
+# {"my-full-backup-bucket": ["etc","boot","site","db"], "my-db-only-bucket": ["db"]}
 try:
     bucket_components = json.loads(os.environ.get('BUCKET_COMPONENTS', '{}'))
 except json.JSONDecodeError:
