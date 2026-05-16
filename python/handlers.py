@@ -7,11 +7,13 @@ import boto3
 import botocore
 import requests
 
-# Config
-bucket_blacklist = os.environ['BUCKETSBLACKLIST'].split(",")
-s3_prefix = os.environ['S3PREFIX']
+# Config. Read with safe defaults so this module can be imported by other
+# handlers in the same package (e.g. alarm_forwarder) that don't need the
+# full s3-monitor configuration set.
+bucket_blacklist = os.environ.get('BUCKETSBLACKLIST', '').split(",")
+s3_prefix = os.environ.get('S3PREFIX', 'backup')
 slack_webhook_url = os.environ.get('SLACK_WEBHOOK_URL')
-aws_region = os.environ['AWSREGION']
+aws_region = os.environ.get('AWSREGION', 'eu-west-3')
 
 # Optional per-bucket expected components, e.g.:
 # {"my-full-backup-bucket": ["etc","boot","site","db"], "my-db-only-bucket": ["db"]}
