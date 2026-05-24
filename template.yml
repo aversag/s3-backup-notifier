@@ -56,6 +56,22 @@ Parameters:
     Type: String
     Default: '{}'
     Description: JSON mapping bucket name to list of expected components ("etc","boot","site","db"). Buckets not listed keep the legacy "at least one file today" check.
+  B2BUCKETS:
+    Type: String
+    Default: ''
+    Description: Comma-separated list of Backblaze B2 buckets to monitor (in addition to AWS). Empty means AWS-only.
+  B2ENDPOINTURL:
+    Type: String
+    Default: ''
+    Description: B2 S3-compatible endpoint URL (e.g. https://s3.eu-central-003.backblazeb2.com). Empty means AWS-only.
+  B2SECRETARN:
+    Type: String
+    Default: ''
+    Description: ARN of the Secrets Manager secret holding B2 credentials (JSON {"key_id","application_key"}). Empty means AWS-only.
+###########################################################
+Conditions:
+###########################################################
+  HasB2Secret: !Not [!Equals [!Ref B2SECRETARN, '']]
 ###########################################################
 Resources:
 ###########################################################
@@ -82,6 +98,9 @@ Resources:
           SLACK_WEBHOOK_URL: !Ref SLACKWEBHOOKURL
           SIZE_THRESHOLD_PERCENT: !Ref SIZETHRESHOLDPERCENT
           BUCKET_COMPONENTS: !Ref BUCKETCOMPONENTS
+          B2_BUCKETS: !Ref B2BUCKETS
+          B2_ENDPOINT_URL: !Ref B2ENDPOINTURL
+          B2_SECRET_ARN: !Ref B2SECRETARN
       Policies:
         - AWSLambdaExecute # Managed Policy
         - Version: '2012-10-17' # Policy Document
@@ -96,6 +115,13 @@ Resources:
               Action:
                 - ses:SendEmail
               Resource: '*'
+            - !If
+              - HasB2Secret
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Ref B2SECRETARN
+              - !Ref AWS::NoValue
       Events:
         Timer:
           Type: Schedule
@@ -126,6 +152,9 @@ Resources:
           SLACK_WEBHOOK_URL: !Ref SLACKWEBHOOKURL
           SIZE_THRESHOLD_PERCENT: !Ref SIZETHRESHOLDPERCENT
           BUCKET_COMPONENTS: !Ref BUCKETCOMPONENTS
+          B2_BUCKETS: !Ref B2BUCKETS
+          B2_ENDPOINT_URL: !Ref B2ENDPOINTURL
+          B2_SECRET_ARN: !Ref B2SECRETARN
       Policies:
         - AWSLambdaExecute
         - Version: '2012-10-17'
@@ -135,6 +164,13 @@ Resources:
                 - s3:List*
               Resource:
                 - "arn:aws:s3:::*"
+            - !If
+              - HasB2Secret
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Ref B2SECRETARN
+              - !Ref AWS::NoValue
       Events:
         Timer:
           Type: Schedule

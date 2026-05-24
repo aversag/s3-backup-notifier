@@ -22,13 +22,63 @@ try:
 except json.JSONDecodeError:
     bucket_components = {}
 
+# Backblaze B2 config (optional — empty means AWS-only monitoring).
+b2_buckets = [b.strip() for b in os.environ.get('B2_BUCKETS', '').split(',') if b.strip()]
+b2_endpoint_url = os.environ.get('B2_ENDPOINT_URL', '')
+b2_secret_arn = os.environ.get('B2_SECRET_ARN', '')
+
 # Get Today's date
 today = datetime.date.today()
 
 # AWS Connection
-session = boto3.Session(region_name=aws_region)
-s3 = session.resource('s3')
-bucket_names = s3.buckets.all()
+aws_session = boto3.Session(region_name=aws_region)
+aws_s3 = aws_session.resource('s3')
+
+# Lazy B2 client — built on first call so we don't pay the Secrets Manager
+# lookup unless B2 monitoring is actually configured.
+_b2_s3 = None
+
+
+def _get_b2_s3():
+    global _b2_s3
+    if _b2_s3 is not None:
+        return _b2_s3
+    if not (b2_buckets and b2_endpoint_url and b2_secret_arn):
+        return None
+    sm = aws_session.client('secretsmanager')
+    raw = sm.get_secret_value(SecretId=b2_secret_arn)['SecretString']
+    creds = json.loads(raw)
+    b2_session = boto3.Session(
+        aws_access_key_id=creds['key_id'],
+        aws_secret_access_key=creds['application_key'],
+    )
+    _b2_s3 = b2_session.resource('s3', endpoint_url=b2_endpoint_url)
+    return _b2_s3
+
+
+def _iter_target_buckets():
+    """Yield (s3_resource, bucket_name, provider) for every bucket we should check.
+
+    AWS buckets are discovered by enumerating the account; B2 buckets come from
+    the explicit B2_BUCKETS env var because we can't list cross-account.
+    """
+    for bucket in aws_s3.buckets.all():
+        if not bucket.name.startswith(s3_prefix):
+            continue
+        if bucket.name in bucket_blacklist:
+            continue
+        yield aws_s3, bucket.name, 'aws'
+
+    if b2_buckets:
+        b2 = _get_b2_s3()
+        if b2 is None:
+            print("WARN: B2_BUCKETS set but B2_ENDPOINT_URL/B2_SECRET_ARN missing — skipping B2")
+            return
+        for name in b2_buckets:
+            if name in bucket_blacklist:
+                continue
+            yield b2, name, 'b2'
+
 
 # Classification patterns. First match wins; 'site' is a fallback for archives that
 # match none of the above.
@@ -70,13 +120,13 @@ def _today_components(root_objs):
     return found
 
 
-def _list_root_objs(bucket_name):
+def _list_root_objs(s3_resource, bucket_name):
     """Return root-level objects only, sorted newest first.
 
     Using Delimiter='/' lets S3 skip everything under sub-prefixes server-side
     instead of streaming millions of keys to the Lambda just to filter them out.
     """
-    bucket = s3.Bucket(bucket_name)
+    bucket = s3_resource.Bucket(bucket_name)
     root_objs = list(bucket.objects.filter(Delimiter='/'))
     root_objs.sort(key=lambda o: o.last_modified, reverse=True)
     return root_objs
@@ -84,16 +134,10 @@ def _list_root_objs(bucket_name):
 
 def main(event, context):
     size_threshold_percent = int(os.environ.get('SIZE_THRESHOLD_PERCENT', '50'))
-    for bucket_name in bucket_names:
-        if not bucket_name.name.startswith(s3_prefix):
-            continue
-
-        if bucket_name.name in bucket_blacklist:
-            continue
-
+    for s3_resource, name, provider in _iter_target_buckets():
         try:
-            print("Bucket --> " + str(bucket_name.name))
-            root_objs = _list_root_objs(bucket_name.name)
+            print(f"Bucket --> {name} ({provider})")
+            root_objs = _list_root_objs(s3_resource, name)
             if not root_objs:
                 continue
 
@@ -112,7 +156,7 @@ def main(event, context):
             if not today_objs:
                 last = root_objs[0]
                 notification(
-                    bucket_name.name,
+                    name,
                     file_date=last.last_modified.date(),
                     file_name=last.key,
                     file_size=sizeof_fmt(last.size),
@@ -127,13 +171,13 @@ def main(event, context):
             print(f"--> Today: {len(today_objs)} files, total {sizeof_fmt(today_total)}")
 
             # Component-level check (only if bucket is configured)
-            expected = bucket_components.get(bucket_name.name)
+            expected = bucket_components.get(name)
             if expected:
                 found = _today_components(today_objs)
                 missing = [c for c in expected if c not in found]
                 if missing:
                     notification(
-                        bucket_name.name,
+                        name,
                         file_date=today,
                         file_name=", ".join(missing),
                         file_size="-",
@@ -149,7 +193,7 @@ def main(event, context):
                 avg_size = sum(daily_sizes[d] for d in recent_days) / len(recent_days)
                 if avg_size > 0 and today_total < avg_size * size_threshold_percent / 100:
                     notification(
-                        bucket_name.name,
+                        name,
                         file_date=today,
                         file_name=f"{len(today_objs)} files",
                         file_size=sizeof_fmt(today_total),
@@ -217,27 +261,22 @@ def report(event, context):
     ok_count = 0
     total_count = 0
 
-    for bucket_name in bucket_names:
-        if not bucket_name.name.startswith(s3_prefix):
-            continue
-        if bucket_name.name in bucket_blacklist:
-            continue
-
+    for s3_resource, name, provider in _iter_target_buckets():
         total_count += 1
-        name = bucket_name.name
+        provider_tag = "" if provider == 'aws' else f" [{provider}]"
 
         try:
-            root_objs = _list_root_objs(name)
+            root_objs = _list_root_objs(s3_resource, name)
 
             if not root_objs:
-                lines.append(f"❌ `{name}` — empty bucket")
+                lines.append(f"❌ `{name}`{provider_tag} — empty bucket")
                 continue
 
             today_objs = [obj for obj in root_objs if obj.last_modified.date() == today]
 
             if not today_objs:
                 last = root_objs[0]
-                lines.append(f"❌ `{name}` — no backup today (last: {last.last_modified.date()})")
+                lines.append(f"❌ `{name}`{provider_tag} — no backup today (last: {last.last_modified.date()})")
                 continue
 
             today_total = sum(obj.size for obj in today_objs)
@@ -272,13 +311,13 @@ def report(event, context):
                     comp_warning = f" — missing: {','.join(missing)}"
 
             if is_suspicious or comp_warning:
-                lines.append(f"⚠️ `{name}` — {file_count} files, {sizeof_fmt(today_total)}{variation}{comp_warning}")
+                lines.append(f"⚠️ `{name}`{provider_tag} — {file_count} files, {sizeof_fmt(today_total)}{variation}{comp_warning}")
             else:
-                lines.append(f"✅ `{name}` — {file_count} files, {sizeof_fmt(today_total)}{variation}")
+                lines.append(f"✅ `{name}`{provider_tag} — {file_count} files, {sizeof_fmt(today_total)}{variation}")
                 ok_count += 1
 
         except botocore.exceptions.ClientError as e:
-            lines.append(f"❌ `{name}` — error: {e.response['Error']['Message']}")
+            lines.append(f"❌ `{name}`{provider_tag} — error: {e.response['Error']['Message']}")
 
     header = f"*📊 S3 Backup Report — {today}*\n"
     footer = f"\n*Total: {ok_count}/{total_count} buckets OK*"

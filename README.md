@@ -37,6 +37,28 @@ CloudWatch Events (daily cron)
 | `SLACK_WEBHOOK_URL` | Slack incoming webhook URL | - |
 | `SIZE_THRESHOLD_PERCENT` | Alert if today's size < X% of previous | `50` |
 | `AWSREGION` | AWS region | `eu-west-3` |
+| `BUCKET_COMPONENTS` | JSON mapping bucket → expected components (`db`, `etc`, `boot`, `site`) | `{}` |
+| `B2_BUCKETS` | Comma-separated B2 bucket names to monitor (in addition to AWS) | empty |
+| `B2_ENDPOINT_URL` | B2 S3-compatible endpoint URL (e.g. `https://s3.eu-central-003.backblazeb2.com`) | empty |
+| `B2_SECRET_ARN` | ARN of a Secrets Manager secret containing `{"key_id","application_key"}` | empty |
+
+### Multi-cloud monitoring (B2)
+
+The Lambda can monitor both AWS S3 and Backblaze B2 buckets in a single pass. AWS buckets are discovered by enumeration; B2 buckets must be listed explicitly in `B2_BUCKETS` because there is no cross-account `list-buckets` for B2.
+
+To enable:
+
+1. Create a Secrets Manager secret in the same region as the Lambda:
+   ```bash
+   aws secretsmanager create-secret \
+     --name s3monitoring/b2-credentials \
+     --secret-string '{"key_id":"...","application_key":"..."}' \
+     --region eu-west-3
+   ```
+2. Set `B2_BUCKETS`, `B2_ENDPOINT_URL`, `B2_SECRET_ARN` (env vars or stack parameters).
+3. The Lambda IAM role gets `secretsmanager:GetSecretValue` only when `B2_SECRET_ARN` is non-empty (CloudFormation `Conditions`).
+
+When B2 is configured, the daily report appends a `[b2]` tag to B2-hosted bucket lines so you can tell them apart.
 
 ## Deployment
 
