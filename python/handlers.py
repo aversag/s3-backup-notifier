@@ -334,6 +334,208 @@ def alarm_forwarder(event, context):
             print(f"Slack forward failed: {e}")
 
 
+def _collect_statuses():
+    """Scan every monitored backup bucket, return a per-bucket status dict.
+
+    Same logic as report() (root-level objects, 3-day average, component check)
+    but returns structured data for HTML rendering instead of Slack text.
+    """
+    size_threshold_percent = int(os.environ.get('SIZE_THRESHOLD_PERCENT', '50'))
+    day = datetime.date.today()  # recompute: a warm container may outlive a day
+    statuses = []
+    for bucket in s3.buckets.all():
+        if not bucket.name.startswith(s3_prefix):
+            continue
+        if bucket.name in bucket_blacklist:
+            continue
+        entry = {'name': bucket.name}
+        try:
+            root_objs = _list_root_objs(bucket.name)
+        except botocore.exceptions.ClientError as e:
+            entry.update(state='error', detail=e.response['Error']['Message'])
+            statuses.append(entry)
+            continue
+        if not root_objs:
+            entry.update(state='fail', detail='bucket vide', last_date=None)
+            statuses.append(entry)
+            continue
+
+        today_objs = [o for o in root_objs if o.last_modified.date() == day]
+        last = root_objs[0]
+        daily = {}
+        for o in root_objs:
+            d = o.last_modified.date()
+            if d < day:
+                daily[d] = daily.get(d, 0) + o.size
+        recent = sorted(daily, reverse=True)[:3]
+        avg = sum(daily[d] for d in recent) / len(recent) if recent else 0
+        today_total = sum(o.size for o in today_objs)
+        variation = ((today_total - avg) / avg * 100) if avg > 0 else None
+        suspicious = bool(recent) and avg > 0 and today_total < avg * size_threshold_percent / 100
+        expected = bucket_components.get(bucket.name)
+        missing = [c for c in expected if c not in _today_components(today_objs)] if expected else []
+
+        if not today_objs:
+            state = 'fail'
+        elif suspicious or missing:
+            state = 'warn'
+        else:
+            state = 'ok'
+        entry.update(
+            state=state,
+            last_date=last.last_modified.date().isoformat(),
+            today_count=len(today_objs),
+            today_size_h=sizeof_fmt(today_total),
+            avg_size_h=(sizeof_fmt(avg) if avg else '—'),
+            variation=(round(variation) if variation is not None else None),
+            missing=missing,
+        )
+        statuses.append(entry)
+
+    order = {'fail': 0, 'error': 0, 'warn': 1, 'ok': 2}
+    statuses.sort(key=lambda s: (order.get(s['state'], 3), s['name']))
+    return statuses
+
+
+def _render_dashboard(statuses):
+    import html as _html
+    now = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')
+    day = datetime.date.today().isoformat()
+    total = len(statuses)
+    ok = sum(1 for s in statuses if s['state'] == 'ok')
+    warn = sum(1 for s in statuses if s['state'] == 'warn')
+    bad = sum(1 for s in statuses if s['state'] in ('fail', 'error'))
+    colors = {'ok': '#22c55e', 'warn': '#f59e0b', 'fail': '#ef4444', 'error': '#ef4444'}
+    labels = {'ok': 'OK', 'warn': 'ATTENTION', 'fail': 'ÉCHEC', 'error': 'ERREUR'}
+
+    cards = []
+    for s in statuses:
+        c = colors.get(s['state'], '#64748b')
+        lab = labels.get(s['state'], s['state'])
+        name = _html.escape(s['name'])
+        if s['state'] == 'error':
+            body = "<div class='detail'>%s</div>" % _html.escape(s.get('detail', ''))
+        elif s.get('last_date') is None:
+            body = "<div class='detail'>bucket vide</div>"
+        else:
+            var = s.get('variation')
+            var_html = ""
+            if var is not None:
+                var_html = "<span class='var'>%s %+d%%</span>" % ('↑' if var >= 0 else '↓', var)
+            miss = ""
+            if s.get('missing'):
+                miss = "<div class='miss'>manque : %s</div>" % _html.escape(', '.join(s['missing']))
+            fresh = "backup du jour" if s['state'] != 'fail' else ("dernier : %s" % s.get('last_date'))
+            body = (
+                "<div class='row'><span>%s fichiers</span><span class='size'>%s%s</span></div>"
+                "<div class='row sub'><span>%s</span><span>moy 3j : %s</span></div>%s"
+                % (s.get('today_count', 0), _html.escape(str(s.get('today_size_h', '—'))), var_html,
+                   fresh, _html.escape(str(s.get('avg_size_h', '—'))), miss)
+            )
+        cards.append(
+            "<div class='card' style='border-left:4px solid %s'>"
+            "<div class='hd'><span class='name'>%s</span>"
+            "<span class='badge' style='background:%s'>%s</span></div>%s</div>"
+            % (c, name, c, lab, body)
+        )
+    cards_html = "\n".join(cards)
+
+    return """<!doctype html><html lang="fr"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="300">
+<title>Backups — {ok}/{total} OK</title>
+<style>
+:root{{color-scheme:dark}}
+*{{box-sizing:border-box}}
+body{{margin:0;font:14px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#0f172a;color:#e2e8f0}}
+header{{padding:20px 24px;border-bottom:1px solid #1e293b;display:flex;align-items:baseline;gap:16px;flex-wrap:wrap}}
+h1{{margin:0;font-size:18px;font-weight:600}}
+.sum{{display:flex;gap:10px;font-size:13px}}
+.pill{{padding:2px 10px;border-radius:999px;font-weight:600;color:#0f172a}}
+.grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;padding:20px 24px}}
+.card{{background:#1e293b;border-radius:10px;padding:14px 16px}}
+.hd{{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px}}
+.name{{font-weight:600;word-break:break-all}}
+.badge{{color:#0f172a;font-size:11px;font-weight:700;padding:2px 8px;border-radius:6px;white-space:nowrap}}
+.row{{display:flex;justify-content:space-between;gap:8px}}
+.row.sub{{color:#94a3b8;font-size:12px;margin-top:2px}}
+.size{{font-variant-numeric:tabular-nums}}
+.var{{color:#94a3b8;font-size:12px;margin-left:6px}}
+.miss{{margin-top:6px;color:#f59e0b;font-size:12px}}
+.detail{{color:#94a3b8}}
+footer{{padding:12px 24px;color:#64748b;font-size:12px;border-top:1px solid #1e293b}}
+</style></head><body>
+<header>
+<h1>🗄️ Backups Will-Hosting</h1>
+<div class="sum">
+<span class="pill" style="background:#22c55e"><b>{ok}</b> OK</span>
+<span class="pill" style="background:#f59e0b"><b>{warn}</b> attention</span>
+<span class="pill" style="background:#ef4444"><b>{bad}</b> échec</span>
+</div>
+</header>
+<div class="grid">
+{cards_html}
+</div>
+<footer>Généré le {now} · {total} buckets · rafraîchissement auto 5 min · jour de référence {day}</footer>
+</body></html>""".format(ok=ok, total=total, warn=warn, bad=bad, cards_html=cards_html, now=now, day=day)
+
+
+def dashboard_http(event, context):
+    """Lambda Function URL handler: private HTML dashboard of all backups.
+
+    Two independent, composable gates (defense in depth):
+      * DASHBOARD_ALLOWED_IPS — comma-separated CIDRs; reject other source IPs.
+      * DASHBOARD_AUTH         — "user:password" HTTP Basic Auth.
+    Enforced only if set; if BOTH are empty the dashboard is fail-closed (503).
+    """
+    import base64
+    import ipaddress
+    auth = os.environ.get('DASHBOARD_AUTH', '')
+    allowed = os.environ.get('DASHBOARD_ALLOWED_IPS', '')
+    if not auth and not allowed:
+        return {'statusCode': 503,
+                'headers': {'Content-Type': 'text/plain; charset=utf-8'},
+                'body': 'Dashboard non protege : definir DASHBOARD_ALLOWED_IPS et/ou DASHBOARD_AUTH.'}
+
+    # 1) IP allow-list (if configured). Function URL payload v2 -> requestContext.http.sourceIp
+    if allowed:
+        src = ((event.get('requestContext') or {}).get('http') or {}).get('sourceIp', '')
+        permitted = False
+        try:
+            ip = ipaddress.ip_address(src)
+            permitted = any(ip in ipaddress.ip_network(c.strip(), strict=False)
+                            for c in allowed.split(',') if c.strip())
+        except ValueError:
+            permitted = False
+        if not permitted:
+            print("dashboard: IP refusee:", src)
+            return {'statusCode': 403, 'headers': {'Content-Type': 'text/plain; charset=utf-8'},
+                    'body': 'IP non autorisee.'}
+
+    # 2) HTTP Basic Auth (if configured)
+    if auth:
+        hdrs = {k.lower(): v for k, v in (event.get('headers') or {}).items()}
+        provided = hdrs.get('authorization', '')
+        ok = False
+        if provided.startswith('Basic '):
+            try:
+                ok = base64.b64decode(provided[6:]).decode('utf-8', 'replace') == auth
+            except Exception:
+                ok = False
+        if not ok:
+            return {'statusCode': 401,
+                    'headers': {'WWW-Authenticate': 'Basic realm="Backups"', 'Content-Type': 'text/plain; charset=utf-8'},
+                    'body': 'Authentification requise.'}
+    try:
+        return {'statusCode': 200,
+                'headers': {'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store'},
+                'body': _render_dashboard(_collect_statuses())}
+    except Exception as e:  # never leak a stack trace to the browser
+        print("dashboard error:", repr(e))
+        return {'statusCode': 500, 'headers': {'Content-Type': 'text/plain; charset=utf-8'},
+                'body': 'Erreur interne lors de la generation du dashboard.'}
+
+
 # Run locally for testing purpose
 if __name__ == '__main__':
     main(0, 0)

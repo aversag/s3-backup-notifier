@@ -56,6 +56,15 @@ Parameters:
     Type: String
     Default: '{}'
     Description: JSON mapping bucket name to list of expected components ("etc","boot","site","db"). Buckets not listed keep the legacy "at least one file today" check.
+  DASHBOARDAUTH:
+    Type: String
+    Default: ''
+    NoEcho: true
+    Description: Basic-auth credential "user:password" for the private dashboard.
+  DASHBOARDALLOWEDIPS:
+    Type: String
+    Default: ''
+    Description: Comma-separated CIDRs allowed to reach the dashboard (e.g. "51.15.226.5/32,203.0.113.0/24"). Empty = no IP restriction. If both this and DASHBOARDAUTH are empty the dashboard is fail-closed (503).
 ###########################################################
 Resources:
 ###########################################################
@@ -141,6 +150,43 @@ Resources:
           Properties:
             Name: s3-report-schedule
             Schedule: cron(0 10 * * ? *)
+      Tags:
+        Project: !Ref PROJECT
+        Environment: !Ref ENV
+        Region: !Ref AWSREGION
+
+  s3dashboard:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      FunctionName: !Sub s3-dashboard-${ENV}
+      Description: !Sub Private HTML dashboard of all backups (${PROJECT})
+      Handler: handlers.dashboard_http
+      Runtime: python3.9
+      CodeUri: ./python
+      MemorySize: 512
+      Timeout: 60
+      Layers:
+        - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:layer:${BOTOLAYER}:${BOTOLAYERVERSION}'
+      Environment:
+        Variables:
+          S3PREFIX: !Ref S3PREFIX
+          BUCKETSBLACKLIST: !Ref BUCKETSBLACKLIST
+          AWSREGION: !Ref AWSREGION
+          SIZE_THRESHOLD_PERCENT: !Ref SIZETHRESHOLDPERCENT
+          BUCKET_COMPONENTS: !Ref BUCKETCOMPONENTS
+          DASHBOARD_AUTH: !Ref DASHBOARDAUTH
+          DASHBOARD_ALLOWED_IPS: !Ref DASHBOARDALLOWEDIPS
+      FunctionUrlConfig:
+        AuthType: NONE
+      Policies:
+        - AWSLambdaExecute
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - s3:List*
+              Resource:
+                - "arn:aws:s3:::*"
       Tags:
         Project: !Ref PROJECT
         Environment: !Ref ENV
@@ -297,3 +343,10 @@ Resources:
       TreatMissingData: breaching
       AlarmActions:
         - !Ref alarmTopic
+
+###########################################################
+Outputs:
+###########################################################
+  DashboardUrl:
+    Description: Private backup dashboard URL (HTTP Basic Auth via DASHBOARD_AUTH)
+    Value: !GetAtt s3dashboardUrl.FunctionUrl

@@ -46,6 +46,8 @@ jobs:
           SIZE_THRESHOLD: ${{ secrets.SIZE_THRESHOLD_PERCENT }}
           ENV_VAL: ${{ secrets.ENV }}
           PROJECT_VAL: ${{ secrets.PROJECT }}
+          DASHBOARD_AUTH: ${{ secrets.DASHBOARD_AUTH }}
+          DASHBOARD_ALLOWED_IPS: ${{ secrets.DASHBOARD_ALLOWED_IPS }}
         run: |
           # sam deploy --parameter-overrides expects a single shorthand string.
           # Wrap BUCKETCOMPONENTS in single quotes inside that string so SAM's
@@ -56,6 +58,8 @@ jobs:
           OVERRIDES="$OVERRIDES SLACKWEBHOOKURL=$SLACK_WEBHOOK_URL"
           OVERRIDES="$OVERRIDES SIZETHRESHOLDPERCENT=$SIZE_THRESHOLD"
           OVERRIDES="$OVERRIDES BUCKETCOMPONENTS='$BUCKET_COMPONENTS'"
+          OVERRIDES="$OVERRIDES DASHBOARDAUTH='$DASHBOARD_AUTH'"
+          OVERRIDES="$OVERRIDES DASHBOARDALLOWEDIPS='$DASHBOARD_ALLOWED_IPS'"
           sam deploy \
             --template-file build/template.yaml \
             --stack-name "$PROJECT_VAL-$ENV_VAL" \

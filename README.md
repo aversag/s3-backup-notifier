@@ -37,6 +37,23 @@ CloudWatch Events (daily cron)
 | `SLACK_WEBHOOK_URL` | Slack incoming webhook URL | - |
 | `SIZE_THRESHOLD_PERCENT` | Alert if today's size < X% of previous | `50` |
 | `AWSREGION` | AWS region | `eu-west-3` |
+| `DASHBOARD_AUTH` | Basic-auth `user:password` for the private dashboard | - |
+| `DASHBOARD_ALLOWED_IPS` | Comma-separated CIDRs allowed to reach the dashboard (e.g. `51.15.226.5/32`) | - |
+
+## Private dashboard
+
+The `s3-dashboard-<env>` Lambda serves a **private HTML dashboard** of every backup
+bucket through a **Lambda Function URL**. On each request it scans the monitored
+buckets (freshness, today's size, variation vs the 3-day average, missing components)
+and renders a colour-coded status page — no extra bucket or CloudFront needed.
+
+Two composable gates (defense in depth), each enforced only if set:
+
+- `DASHBOARD_ALLOWED_IPS` — IP allow-list (CIDRs); other source IPs get `403`.
+- `DASHBOARD_AUTH` — HTTP Basic Auth `user:password`; wrong/absent gets `401`.
+
+If **both** are empty the dashboard is **fail-closed** (`503`). The browsable URL is
+the stack output `DashboardUrl`. Set the values as GitHub Actions secrets.
 
 ## Deployment
 
