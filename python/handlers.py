@@ -334,46 +334,56 @@ def alarm_forwarder(event, context):
             print(f"Slack forward failed: {e}")
 
 
-def _collect_statuses():
-    """Scan every monitored backup bucket, return a per-bucket status dict.
+def _status_for_bucket(bucket_name, day, size_threshold_percent, client):
+    """Build the status entry for one bucket.
 
-    Same logic as report() (root-level objects, 3-day average, component check)
-    but returns structured data for HTML rendering instead of Slack text.
+    Runs in a worker thread, so it goes through the thread-safe low-level client
+    (the boto3 resource is not safe to share across threads). Any failure is
+    captured as an 'error' entry rather than propagated, so one bad bucket can't
+    take down the whole dashboard render.
     """
-    size_threshold_percent = int(os.environ.get('SIZE_THRESHOLD_PERCENT', '50'))
-    day = datetime.date.today()  # recompute: a warm container may outlive a day
-    statuses = []
-    for bucket in s3.buckets.all():
-        if not bucket.name.startswith(s3_prefix):
-            continue
-        if bucket.name in bucket_blacklist:
-            continue
-        entry = {'name': bucket.name}
-        try:
-            root_objs = _list_root_objs(bucket.name)
-        except botocore.exceptions.ClientError as e:
-            entry.update(state='error', detail=e.response['Error']['Message'])
-            statuses.append(entry)
-            continue
+    entry = {'name': bucket_name}
+    try:
+        # Delimiter='/' keeps this to root-level objects: S3 skips everything
+        # under sub-prefixes server-side instead of streaming every key.
+        root_objs = []
+        paginator = client.get_paginator('list_objects_v2')
+        for page in paginator.paginate(Bucket=bucket_name, Delimiter='/'):
+            for o in page.get('Contents', []):
+                root_objs.append((o['Key'], o['LastModified'], o['Size']))
+
         if not root_objs:
             entry.update(state='fail', detail='bucket vide', last_date=None)
-            statuses.append(entry)
-            continue
+            return entry
 
-        today_objs = [o for o in root_objs if o.last_modified.date() == day]
-        last = root_objs[0]
+        root_objs.sort(key=lambda t: t[1], reverse=True)
+        today_objs = [t for t in root_objs if t[1].date() == day]
+        last_key, last_lm, last_size = root_objs[0]
+
         daily = {}
-        for o in root_objs:
-            d = o.last_modified.date()
+        for key, lm, size in root_objs:
+            d = lm.date()
             if d < day:
-                daily[d] = daily.get(d, 0) + o.size
+                daily[d] = daily.get(d, 0) + size
         recent = sorted(daily, reverse=True)[:3]
         avg = sum(daily[d] for d in recent) / len(recent) if recent else 0
-        today_total = sum(o.size for o in today_objs)
+        today_total = sum(t[2] for t in today_objs)
         variation = ((today_total - avg) / avg * 100) if avg > 0 else None
         suspicious = bool(recent) and avg > 0 and today_total < avg * size_threshold_percent / 100
-        expected = bucket_components.get(bucket.name)
-        missing = [c for c in expected if c not in _today_components(today_objs)] if expected else []
+
+        # Component check (configured buckets only). A single '-system-' tarball
+        # (s3backup) satisfies legacy 'boot'/'etc' expectations.
+        expected = bucket_components.get(bucket_name)
+        missing = []
+        if expected:
+            found = set()
+            for key, lm, size in today_objs:
+                c = classify(key)
+                if c:
+                    found.add(c)
+            if 'system' in found:
+                found.update({'boot', 'etc'})
+            missing = [c for c in expected if c not in found]
 
         if not today_objs:
             state = 'fail'
@@ -383,14 +393,45 @@ def _collect_statuses():
             state = 'ok'
         entry.update(
             state=state,
-            last_date=last.last_modified.date().isoformat(),
+            last_date=last_lm.date().isoformat(),
             today_count=len(today_objs),
             today_size_h=sizeof_fmt(today_total),
             avg_size_h=(sizeof_fmt(avg) if avg else '—'),
             variation=(round(variation) if variation is not None else None),
             missing=missing,
         )
-        statuses.append(entry)
+        return entry
+    except botocore.exceptions.ClientError as e:
+        entry.update(state='error', detail=e.response['Error']['Message'])
+        return entry
+    except Exception as e:  # noqa: BLE001 - never let one bucket break the page
+        entry.update(state='error', detail=str(e))
+        return entry
+
+
+def _collect_statuses():
+    """Scan every monitored backup bucket in parallel, return per-bucket statuses.
+
+    Same per-bucket logic as report(), but fanned out across threads: the scan is
+    pure S3 I/O, so a sequential loop over the whole fleet blew past the 60s Lambda
+    timeout. The low-level client is shared (thread-safe); the resource is not.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    size_threshold_percent = int(os.environ.get('SIZE_THRESHOLD_PERCENT', '50'))
+    day = datetime.date.today()  # recompute: a warm container may outlive a day
+    client = s3.meta.client
+    names = [b.name for b in s3.buckets.all()
+             if b.name.startswith(s3_prefix) and b.name not in bucket_blacklist]
+
+    statuses = []
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        futures = [
+            pool.submit(_status_for_bucket, name, day, size_threshold_percent, client)
+            for name in names
+        ]
+        for fut in futures:
+            statuses.append(fut.result())
 
     order = {'fail': 0, 'error': 0, 'warn': 1, 'ok': 2}
     statuses.sort(key=lambda s: (order.get(s['state'], 3), s['name']))
