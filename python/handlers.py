@@ -35,7 +35,11 @@ bucket_names = s3.buckets.all()
 COMPONENT_PATTERNS = [
     ('etc',  re.compile(r'(^|[-./_])etc[-.]', re.I)),
     ('boot', re.compile(r'(^|[-./_])boot[-.]', re.I)),
-    ('db',   re.compile(r'(\.sql\.(gz|bz2|xz)$|\.dump$|\.sql$|_gitlab_backup\.tar$|-mysql-|-postgres-|\.pgdump$)', re.I)),
+    # s3backup role bundles /boot + /etc into a single '<prefix>-system-<date>.tar.gz'.
+    ('system', re.compile(r'(^|[-./_])system[-.]', re.I)),
+    # '-db-' covers the s3backup naming for both mysqldump (-db-*.sql.gz) and
+    # mydumper (-db-*.mydumper.tar.gz) dumps, on top of the legacy backup-manager patterns.
+    ('db',   re.compile(r'(\.sql\.(gz|bz2|xz)$|\.dump$|\.sql$|_gitlab_backup\.tar$|-mysql-|-postgres-|-db-|\.pgdump$)', re.I)),
 ]
 SITE_RX = re.compile(r'\.(tar(\.gz|\.bz2|\.xz)?|tgz|zip)$', re.I)
 
@@ -67,6 +71,10 @@ def _today_components(root_objs):
         c = classify(obj.key)
         if c:
             found.add(c)
+    # A single '-system-' tarball (s3backup) carries both /boot and /etc, so it
+    # satisfies legacy 'boot'/'etc' expectations without touching BUCKET_COMPONENTS.
+    if 'system' in found:
+        found.update({'boot', 'etc'})
     return found
 
 
