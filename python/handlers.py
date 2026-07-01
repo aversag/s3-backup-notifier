@@ -530,6 +530,32 @@ footer{{padding:12px 24px;color:#64748b;font-size:12px;border-top:1px solid #1e2
 </body></html>""".format(ok=ok, total=total, warn=warn, bad=bad, cards_html=cards_html, now=now, day=day)
 
 
+def _login_form(error=False):
+    """Minimal dark login form. A Lambda Function URL remaps WWW-Authenticate,
+    so the browser never shows a Basic-Auth prompt — we do form + cookie."""
+    err = "<p class='err'>Mot de passe incorrect.</p>" if error else ""
+    return (
+        "<!doctype html><html lang='fr'><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width, initial-scale=1'>"
+        "<title>Backups — connexion</title><style>"
+        ":root{color-scheme:dark}"
+        "body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;"
+        "font:15px/1.4 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;"
+        "background:#0f172a;color:#e2e8f0}"
+        "form{background:#1e293b;padding:28px 26px;border-radius:12px;width:280px;text-align:center}"
+        "h1{font-size:16px;margin:0 0 18px}"
+        "input,button{width:100%;box-sizing:border-box;padding:10px 12px;border-radius:8px;border:0;font-size:14px}"
+        "input{background:#0f172a;color:#e2e8f0;margin-bottom:12px}"
+        "button{background:#22c55e;color:#0f172a;font-weight:700;cursor:pointer}"
+        ".err{color:#ef4444;font-size:13px;margin:0 0 12px}"
+        "</style></head><body><form method='post'>"
+        "<h1>🗄️ Backups Will-Hosting</h1>" + err +
+        "<input type='password' name='pw' autofocus placeholder='Mot de passe' required>"
+        "<button type='submit'>Entrer</button>"
+        "</form></body></html>"
+    )
+
+
 def dashboard_http(event, context):
     """Lambda Function URL handler: private HTML dashboard of all backups.
 
@@ -562,20 +588,45 @@ def dashboard_http(event, context):
             return {'statusCode': 403, 'headers': {'Content-Type': 'text/plain; charset=utf-8'},
                     'body': 'IP non autorisee.'}
 
-    # 2) HTTP Basic Auth (if configured)
+    # 2) Auth gate. A Lambda Function URL remaps the WWW-Authenticate header, so
+    #    the browser never shows a Basic-Auth prompt -> authenticate through a
+    #    cookie set by a small login form. An Authorization: Basic header is still
+    #    honoured so `curl -u user:pass` and API clients keep working.
     if auth:
+        import hashlib
+        import urllib.parse
+        expected_pw = auth.split(':', 1)[1] if ':' in auth else auth
+        token = hashlib.sha256(('dashv1:' + expected_pw).encode()).hexdigest()
+
         hdrs = {k.lower(): v for k, v in (event.get('headers') or {}).items()}
         provided = hdrs.get('authorization', '')
-        ok = False
+        basic_ok = False
         if provided.startswith('Basic '):
             try:
-                ok = base64.b64decode(provided[6:]).decode('utf-8', 'replace') == auth
+                basic_ok = base64.b64decode(provided[6:]).decode('utf-8', 'replace') == auth
             except Exception:
-                ok = False
-        if not ok:
-            return {'statusCode': 401,
-                    'headers': {'WWW-Authenticate': 'Basic realm="Backups"', 'Content-Type': 'text/plain; charset=utf-8'},
-                    'body': 'Authentification requise.'}
+                basic_ok = False
+        cookie_ok = ('dash=' + token) in [c.strip() for c in (event.get('cookies') or [])]
+
+        if not (basic_ok or cookie_ok):
+            method = ((event.get('requestContext') or {}).get('http') or {}).get('method', 'GET')
+            if method == 'POST':
+                body = event.get('body') or ''
+                if event.get('isBase64Encoded'):
+                    try:
+                        body = base64.b64decode(body).decode('utf-8', 'replace')
+                    except Exception:
+                        body = ''
+                pw = urllib.parse.parse_qs(body).get('pw', [''])[0]
+                if pw == expected_pw:
+                    return {'statusCode': 200,
+                            'headers': {'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store'},
+                            'cookies': ['dash=' + token + '; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=2592000'],
+                            'body': _render_dashboard(_collect_statuses())}
+                return {'statusCode': 401, 'headers': {'Content-Type': 'text/html; charset=utf-8'},
+                        'body': _login_form(error=True)}
+            return {'statusCode': 401, 'headers': {'Content-Type': 'text/html; charset=utf-8'},
+                    'body': _login_form(error=False)}
     try:
         return {'statusCode': 200,
                 'headers': {'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store'},
