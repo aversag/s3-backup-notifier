@@ -163,8 +163,11 @@ Resources:
       Handler: handlers.dashboard_http
       Runtime: python3.9
       CodeUri: ./python
-      MemorySize: 512
-      Timeout: 60
+      # 2048MB ~= 1.2 vCPU: the scan of the few ~100k-object buckets is
+      # CPU-bound (XML parse) and 512MB (~0.42 vCPU) timed out. Timeout is
+      # generous headroom; a warm run is a few seconds.
+      MemorySize: 2048
+      Timeout: 120
       Layers:
         - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:layer:${BOTOLAYER}:${BOTOLAYERVERSION}'
       Environment:

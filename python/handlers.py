@@ -344,30 +344,41 @@ def _status_for_bucket(bucket_name, day, size_threshold_percent, client):
     """
     entry = {'name': bucket_name}
     try:
-        # Delimiter='/' keeps this to root-level objects: S3 skips everything
-        # under sub-prefixes server-side instead of streaming every key.
-        root_objs = []
+        # Single streaming pass over root-level objects (Delimiter='/' lets S3
+        # skip sub-prefixes server-side). Some buckets hold ~100k root objects;
+        # accumulating per-day sizes on the fly keeps memory O(days) and avoids
+        # building/sorting a 100k-element list, which is what starved the CPU on
+        # the throttled Lambda vCPU.
         paginator = client.get_paginator('list_objects_v2')
+        daily = {}            # date (< today) -> summed size
+        today_total = 0
+        today_count = 0
+        today_found = set()   # component categories present in today's files
+        last_lm = None
+        seen_any = False
         for page in paginator.paginate(Bucket=bucket_name, Delimiter='/'):
             for o in page.get('Contents', []):
-                root_objs.append((o['Key'], o['LastModified'], o['Size']))
+                seen_any = True
+                lm = o['LastModified']
+                size = o['Size']
+                if last_lm is None or lm > last_lm:
+                    last_lm = lm
+                if lm.date() == day:
+                    today_total += size
+                    today_count += 1
+                    c = classify(o['Key'])
+                    if c:
+                        today_found.add(c)
+                else:
+                    d = lm.date()
+                    daily[d] = daily.get(d, 0) + size
 
-        if not root_objs:
+        if not seen_any:
             entry.update(state='fail', detail='bucket vide', last_date=None)
             return entry
 
-        root_objs.sort(key=lambda t: t[1], reverse=True)
-        today_objs = [t for t in root_objs if t[1].date() == day]
-        last_key, last_lm, last_size = root_objs[0]
-
-        daily = {}
-        for key, lm, size in root_objs:
-            d = lm.date()
-            if d < day:
-                daily[d] = daily.get(d, 0) + size
         recent = sorted(daily, reverse=True)[:3]
         avg = sum(daily[d] for d in recent) / len(recent) if recent else 0
-        today_total = sum(t[2] for t in today_objs)
         variation = ((today_total - avg) / avg * 100) if avg > 0 else None
         suspicious = bool(recent) and avg > 0 and today_total < avg * size_threshold_percent / 100
 
@@ -376,16 +387,12 @@ def _status_for_bucket(bucket_name, day, size_threshold_percent, client):
         expected = bucket_components.get(bucket_name)
         missing = []
         if expected:
-            found = set()
-            for key, lm, size in today_objs:
-                c = classify(key)
-                if c:
-                    found.add(c)
+            found = set(today_found)
             if 'system' in found:
                 found.update({'boot', 'etc'})
             missing = [c for c in expected if c not in found]
 
-        if not today_objs:
+        if today_count == 0:
             state = 'fail'
         elif suspicious or missing:
             state = 'warn'
@@ -394,7 +401,7 @@ def _status_for_bucket(bucket_name, day, size_threshold_percent, client):
         entry.update(
             state=state,
             last_date=last_lm.date().isoformat(),
-            today_count=len(today_objs),
+            today_count=today_count,
             today_size_h=sizeof_fmt(today_total),
             avg_size_h=(sizeof_fmt(avg) if avg else '—'),
             variation=(round(variation) if variation is not None else None),
@@ -412,9 +419,11 @@ def _status_for_bucket(bucket_name, day, size_threshold_percent, client):
 def _collect_statuses():
     """Scan every monitored backup bucket in parallel, return per-bucket statuses.
 
-    Same per-bucket logic as report(), but fanned out across threads: the scan is
-    pure S3 I/O, so a sequential loop over the whole fleet blew past the 60s Lambda
-    timeout. The low-level client is shared (thread-safe); the resource is not.
+    Same per-bucket logic as report(), fanned out across a small thread pool to
+    overlap the S3 I/O of the many small buckets. Kept deliberately modest (6):
+    the parse of the few huge buckets is CPU-bound and the Lambda vCPU is
+    fractional, so a large pool just thrashes the GIL and runs slower than
+    sequential. The low-level client is shared (thread-safe); the resource is not.
     """
     from concurrent.futures import ThreadPoolExecutor
 
@@ -425,7 +434,7 @@ def _collect_statuses():
              if b.name.startswith(s3_prefix) and b.name not in bucket_blacklist]
 
     statuses = []
-    with ThreadPoolExecutor(max_workers=16) as pool:
+    with ThreadPoolExecutor(max_workers=min(6, len(names) or 1)) as pool:
         futures = [
             pool.submit(_status_for_bucket, name, day, size_threshold_percent, client)
             for name in names
