@@ -42,10 +42,17 @@ COMPONENT_PATTERNS = [
     ('db',   re.compile(r'(\.sql\.(gz|bz2|xz)$|\.dump$|\.sql$|_gitlab_backup\.tar$|-mysql-|-postgres-|-db-|\.pgdump$)', re.I)),
 ]
 SITE_RX = re.compile(r'\.(tar(\.gz|\.bz2|\.xz)?|tgz|zip)$', re.I)
+# Client-side encryption appends a '.age' (s3backup age recipient) or '.gpg' suffix
+# that otherwise defeats the extension-based matching above: an encrypted site
+# tarball '<name>.tar.gz.age' matches neither SITE_RX nor the component patterns and
+# classifies as None, so every age/gpg host would report 'missing: site'. Strip a
+# trailing encryption suffix before matching.
+ENC_SUFFIX_RX = re.compile(r'\.(age|gpg)$', re.I)
 
 
 def classify(key):
     base = key.rsplit('/', 1)[-1]
+    base = ENC_SUFFIX_RX.sub('', base)
     for cat, rx in COMPONENT_PATTERNS:
         if rx.search(base):
             return cat
