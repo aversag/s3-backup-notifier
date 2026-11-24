@@ -97,6 +97,31 @@ def _list_root_objs(bucket_name):
     return root_objs
 
 
+def _scan_subprefixes(client, bucket_name, day):
+    """Count the objects under sub-prefixes that were written on `day`.
+
+    Raw syncs (e.g. WordPress uploads) keep their files under folders and only a
+    couple of static files at the root, so the root-only listing sees nothing new
+    and reports a missing backup every day. Only called when the root has nothing
+    from `day`; streams every key once without keeping the listing in memory.
+    Returns (count, total_size, newest LastModified or None).
+    """
+    count = 0
+    total = 0
+    newest = None
+    for page in client.get_paginator('list_objects_v2').paginate(Bucket=bucket_name):
+        for o in page.get('Contents', []):
+            if '/' not in o['Key']:
+                continue
+            lm = o['LastModified']
+            if newest is None or lm > newest:
+                newest = lm
+            if lm.date() == day:
+                count += 1
+                total += o['Size']
+    return count, total, newest
+
+
 def main(event, context):
     size_threshold_percent = int(os.environ.get('SIZE_THRESHOLD_PERCENT', '50'))
     for bucket_name in bucket_names:
@@ -125,6 +150,10 @@ def main(event, context):
                 print(obj.last_modified.date(), obj.key, sizeof_fmt(obj.size))
 
             if not today_objs:
+                sub_count, sub_size, _ = _scan_subprefixes(s3.meta.client, bucket_name.name, today)
+                if sub_count:
+                    print(f"Backup OK in sub-prefixes: {sub_count} files, total {sizeof_fmt(sub_size)}")
+                    continue
                 last = root_objs[0]
                 notification(
                     bucket_name.name,
@@ -243,16 +272,19 @@ def report(event, context):
 
         try:
             root_objs = _list_root_objs(name)
-
-            if not root_objs:
-                lines.append(f"❌ `{name}` — empty bucket")
-                continue
-
             today_objs = [obj for obj in root_objs if obj.last_modified.date() == today]
 
             if not today_objs:
-                last = root_objs[0]
-                lines.append(f"❌ `{name}` — no backup today (last: {last.last_modified.date()})")
+                sub_count, sub_size, sub_newest = _scan_subprefixes(s3.meta.client, name, today)
+                if sub_count:
+                    lines.append(f"✅ `{name}` — {sub_count} files in folders, {sizeof_fmt(sub_size)}")
+                    ok_count += 1
+                    continue
+                candidates = [o.last_modified for o in root_objs[:1]] + ([sub_newest] if sub_newest else [])
+                if not candidates:
+                    lines.append(f"❌ `{name}` — empty bucket")
+                    continue
+                lines.append(f"❌ `{name}` — no backup today (last: {max(candidates).date()})")
                 continue
 
             today_total = sum(obj.size for obj in today_objs)
@@ -380,12 +412,26 @@ def _status_for_bucket(bucket_name, day, size_threshold_percent, client):
                     d = lm.date()
                     daily[d] = daily.get(d, 0) + size
 
+        sub_mode = False
+        if today_count == 0:
+            sub_count, sub_size, sub_newest = _scan_subprefixes(client, bucket_name, day)
+            if sub_newest is not None:
+                seen_any = True
+                if last_lm is None or sub_newest > last_lm:
+                    last_lm = sub_newest
+            if sub_count:
+                sub_mode = True
+                today_count, today_total = sub_count, sub_size
+
         if not seen_any:
             entry.update(state='fail', detail='bucket vide', last_date=None)
             return entry
 
         recent = sorted(daily, reverse=True)[:3]
         avg = sum(daily[d] for d in recent) / len(recent) if recent else 0
+        if sub_mode:
+            # Root sizes say nothing about a raw sync's daily delta.
+            avg = 0
         variation = ((today_total - avg) / avg * 100) if avg > 0 else None
         suspicious = bool(recent) and avg > 0 and today_total < avg * size_threshold_percent / 100
 
