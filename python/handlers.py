@@ -49,6 +49,16 @@ SITE_RX = re.compile(r'\.(tar(\.gz|\.bz2|\.xz)?|tgz|zip)$', re.I)
 # trailing encryption suffix before matching.
 ENC_SUFFIX_RX = re.compile(r'\.(age|gpg)$', re.I)
 
+# Written at the bucket root by s3backup after a successful raw sync (`marker: true`).
+# An incremental sync uploads only what changed, scattered under sub-prefixes, so the
+# marker is the only daily proof that the sync ran: when it exists, the bucket is
+# judged on its date alone, with no size comparison and no full-bucket scan.
+RAW_SYNC_MARKER = '_last-sync'
+
+
+def _raw_sync_marker(root_objs):
+    return next((o for o in root_objs if o.key == RAW_SYNC_MARKER), None)
+
 
 def classify(key):
     base = key.rsplit('/', 1)[-1]
@@ -137,6 +147,21 @@ def main(event, context):
             if not root_objs:
                 continue
 
+            marker = _raw_sync_marker(root_objs)
+            if marker:
+                if marker.last_modified.date() == today:
+                    print(f"Raw sync OK at {marker.last_modified:%H:%M} UTC")
+                else:
+                    notification(
+                        bucket_name.name,
+                        file_date=marker.last_modified.date(),
+                        file_name=marker.key,
+                        file_size=sizeof_fmt(marker.size),
+                        alert_type="missing"
+                    )
+                    print(f"No raw sync today, last {RAW_SYNC_MARKER}: {marker.last_modified.date()}")
+                continue
+
             today_objs = [obj for obj in root_objs if obj.last_modified.date() == today]
 
             # Group files by day and sum sizes for the last 3 days
@@ -145,9 +170,6 @@ def main(event, context):
                 d = obj.last_modified.date()
                 if d < today:
                     daily_sizes[d] = daily_sizes.get(d, 0) + obj.size
-
-            for obj in root_objs:
-                print(obj.last_modified.date(), obj.key, sizeof_fmt(obj.size))
 
             if not today_objs:
                 sub_count, sub_size, _ = _scan_subprefixes(s3.meta.client, bucket_name.name, today)
@@ -272,6 +294,15 @@ def report(event, context):
 
         try:
             root_objs = _list_root_objs(name)
+            marker = _raw_sync_marker(root_objs)
+            if marker:
+                if marker.last_modified.date() == today:
+                    lines.append(f"✅ `{name}` — raw sync OK at {marker.last_modified:%H:%M} UTC")
+                    ok_count += 1
+                else:
+                    lines.append(f"❌ `{name}` — no raw sync today (last: {marker.last_modified.date()})")
+                continue
+
             today_objs = [obj for obj in root_objs if obj.last_modified.date() == today]
 
             if not today_objs:
@@ -395,9 +426,13 @@ def _status_for_bucket(bucket_name, day, size_threshold_percent, client):
         today_found = set()   # component categories present in today's files
         last_lm = None
         seen_any = False
+        marker_lm = None
         for page in paginator.paginate(Bucket=bucket_name, Delimiter='/'):
             for o in page.get('Contents', []):
                 seen_any = True
+                if o['Key'] == RAW_SYNC_MARKER:
+                    marker_lm = o['LastModified']
+                    continue
                 lm = o['LastModified']
                 size = o['Size']
                 if last_lm is None or lm > last_lm:
@@ -411,6 +446,19 @@ def _status_for_bucket(bucket_name, day, size_threshold_percent, client):
                 else:
                     d = lm.date()
                     daily[d] = daily.get(d, 0) + size
+
+        if marker_lm is not None:
+            synced = marker_lm.date() == day
+            entry.update(
+                state='ok' if synced else 'fail',
+                last_date=marker_lm.date().isoformat(),
+                today_count=1 if synced else 0,
+                today_size_h='—',
+                avg_size_h='—',
+                variation=None,
+                missing=[],
+            )
+            return entry
 
         sub_mode = False
         if today_count == 0:
